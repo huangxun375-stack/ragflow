@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="770" viewBox="0 0 1180 770" role="img" aria-labelledby="12-result-handoff-title">
+<title id="12-result-handoff-title">一包一文档：切片写入 ES，文件树随结果发布保存</title>
+<defs><marker id="12-result-handoff-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0L9 4.5L0 9Z" fill="#54758b"/></marker></defs>
+<rect width="1180" height="770" fill="#ffffff"/>
+<g font-family="Microsoft YaHei, PingFang SC, sans-serif" fill="#19354b">
+<text x="30" y="37" font-size="24" text-anchor="start" font-weight="600" fill="#19354b">一包一文档：切片写入 ES，文件树随结果发布保存</text>
+<rect x="35" y="80" width="260" height="95" rx="8" fill="#f0f4f8" stroke="#8294a8" stroke-width="1.6"/>
+<text x="165.0" y="110" font-size="19" text-anchor="middle" font-weight="600" fill="#19354b">一份 ZIP 文档</text>
+<text x="165.0" y="137" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">所有结果共用文档 ID</text>
+<rect x="405" y="80" width="370" height="95" rx="8" fill="#e9f6ef" stroke="#318366" stroke-width="1.6"/>
+<text x="590.0" y="110" font-size="19" text-anchor="middle" font-weight="600" fill="#19354b">代码包解析组件</text>
+<text x="590.0" y="137" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">同一批保留源码产生两类结果</text>
+<polyline points="295,127 405,127" fill="none" stroke="#54758b" stroke-width="1.8" stroke-linejoin="round"/>
+<polygon points="405,127 396.0,131.0 396.0,123.0" fill="#54758b"/>
+<rect x="70" y="260" width="430" height="100" rx="8" fill="#e9f6ef" stroke="#318366" stroke-width="1.6"/>
+<text x="285.0" y="290" font-size="19" text-anchor="middle" font-weight="600" fill="#19354b">源码切片</text>
+<text x="285.0" y="317" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">正文 + 相对路径 + 起止行号</text>
+<rect x="680" y="260" width="430" height="100" rx="8" fill="#e9f6ef" stroke="#318366" stroke-width="1.6"/>
+<text x="895.0" y="290" font-size="19" text-anchor="middle" font-weight="600" fill="#19354b">文件树与过滤统计</text>
+<text x="895.0" y="317" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">任务内存暂存，不写入检索正文</text>
+<polyline points="480,175 480,218 285,218 285,260" fill="none" stroke="#54758b" stroke-width="1.8" stroke-linejoin="round"/>
+<polygon points="285,260 281.0,251.0 289.0,251.0" fill="#54758b"/>
+<polyline points="700,175 700,218 895,218 895,260" fill="none" stroke="#54758b" stroke-width="1.8" stroke-linejoin="round"/>
+<polygon points="895,260 891.0,251.0 899.0,251.0" fill="#54758b"/>
+<rect x="70" y="425" width="430" height="100" rx="8" fill="#fff4e3" stroke="#bc852f" stroke-width="1.6"/>
+<text x="285.0" y="455" font-size="19" text-anchor="middle" font-weight="600" fill="#19354b">向量化与 ES 索引写入</text>
+<text x="285.0" y="482" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">记录文档、解析轮次与执行标记</text>
+<rect x="680" y="425" width="430" height="100" rx="8" fill="#e9f6ef" stroke="#318366" stroke-width="1.6"/>
+<text x="895.0" y="455" font-size="19" text-anchor="middle" font-weight="600" fill="#19354b">结果发布</text>
+<text x="895.0" y="482" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">索引写完后提交 MySQL 事务</text>
+<polyline points="285,360 285,425" fill="none" stroke="#54758b" stroke-width="1.8" stroke-linejoin="round"/>
+<polygon points="285,425 281.0,416.0 289.0,416.0" fill="#54758b"/>
+<polyline points="895,360 895,425" fill="none" stroke="#54758b" stroke-width="1.8" stroke-linejoin="round"/>
+<polygon points="895,425 891.0,416.0 899.0,416.0" fill="#54758b"/>
+<polyline points="500,475 680,475" fill="none" stroke="#54758b" stroke-width="1.8" stroke-linejoin="round"/>
+<polygon points="680,475 671.0,479.0 671.0,471.0" fill="#54758b"/>
+<rect x="541.0" y="443" width="98.0" height="20" rx="2" fill="#ffffff"/>
+<text x="590" y="458" font-size="15" text-anchor="middle" font-weight="400" fill="#4b667a">全部写入完成</text>
+<rect x="70" y="610" width="430" height="100" rx="8" fill="#f0f4f8" stroke="#8294a8" stroke-width="1.6"/>
+<text x="285.0" y="640" font-size="19" text-anchor="middle" font-weight="600" fill="#19354b">Elasticsearch</text>
+<text x="285.0" y="667" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">源码切片、词项、向量与来源</text>
+<rect x="680" y="610" width="430" height="100" rx="8" fill="#f0f4f8" stroke="#8294a8" stroke-width="1.6"/>
+<text x="895.0" y="640" font-size="19" text-anchor="middle" font-weight="600" fill="#19354b">MySQL</text>
+<text x="895.0" y="667" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">文件树、统计、任务状态与文档计数</text>
+<polyline points="285,525 285,610" fill="none" stroke="#54758b" stroke-width="1.8" stroke-linejoin="round"/>
+<polygon points="285,610 281.0,601.0 289.0,601.0" fill="#54758b"/>
+<rect x="258.5" y="555" width="53.0" height="20" rx="2" fill="#ffffff"/>
+<text x="285" y="570" font-size="15" text-anchor="middle" font-weight="400" fill="#4b667a">存切片</text>
+<polyline points="895,525 895,610" fill="none" stroke="#54758b" stroke-width="1.8" stroke-linejoin="round"/>
+<polygon points="895,610 891.0,601.0 899.0,601.0" fill="#54758b"/>
+<rect x="853.5" y="555" width="83.0" height="20" rx="2" fill="#ffffff"/>
+<text x="895" y="570" font-size="15" text-anchor="middle" font-weight="400" fill="#4b667a">提交元数据</text>
+<text x="35" y="747" font-size="16" text-anchor="start" font-weight="400" fill="#657b8d">查询服务读取 MySQL 发布记录以过滤 ES 切片；文件树 path 与切片 source_path 对应。</text>
+</g>
+</svg>

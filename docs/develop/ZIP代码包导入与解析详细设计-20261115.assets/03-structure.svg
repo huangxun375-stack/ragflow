@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="600" viewBox="0 0 1120 600" role="img" aria-labelledby="03-structure-title">
+<title id="03-structure-title">结构识别：Tree-sitter 解析语法，自定义逻辑选择声明</title>
+<defs><marker id="03-structure-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8Z" fill="#58768b"/></marker></defs>
+<rect width="1120" height="100%" fill="#ffffff"/>
+<g font-family="Microsoft YaHei, sans-serif" fill="#19354b">
+<text x="28" y="35" font-size="22" text-anchor="start" font-weight="600" fill="#19354b">结构识别：Tree-sitter 解析语法，自定义逻辑选择声明</text>
+<rect x="25" y="90" width="230" height="115" rx="7" fill="#eef7f3" stroke="#367d68" stroke-width="1.4"/>
+<text x="140.0" y="121" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">选择语言</text>
+<text x="140.0" y="148" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">按后缀映射</text>
+<text x="140.0" y="173" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">加载已准备的 grammar</text>
+<rect x="305" y="90" width="230" height="115" rx="7" fill="#eef7f3" stroke="#367d68" stroke-width="1.4"/>
+<text x="420.0" y="121" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">Tree-sitter 解析</text>
+<text x="420.0" y="148" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">得到语法节点</text>
+<text x="420.0" y="173" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">保留字节与行列范围</text>
+<rect x="585" y="90" width="230" height="115" rx="7" fill="#eef7f3" stroke="#367d68" stroke-width="1.4"/>
+<text x="700.0" y="121" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">提取声明</text>
+<text x="700.0" y="148" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">函数、类、方法、接口</text>
+<text x="700.0" y="173" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">关联注释与声明包装</text>
+<rect x="865" y="90" width="230" height="115" rx="7" fill="#eef7f3" stroke="#367d68" stroke-width="1.4"/>
+<text x="980.0" y="121" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">结构单元</text>
+<text x="980.0" y="148" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">名称、范围、层级</text>
+<text x="980.0" y="173" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">供切片逻辑使用</text>
+<polyline points="255,147 305,147" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="305,147 297.0,151.0 297.0,143.0" fill="#58768b"/>
+<polyline points="535,147 585,147" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="585,147 577.0,151.0 577.0,143.0" fill="#58768b"/>
+<polyline points="815,147 865,147" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="865,147 857.0,151.0 857.0,143.0" fill="#58768b"/>
+<rect x="25" y="300" width="450" height="245" rx="7" fill="#f5f8fb" stroke="#8195a8" stroke-width="1.4"/>
+<text x="250.0" y="331" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">源码示意：一个类，两个方法</text>
+<text x="50" y="370" font-size="16" text-anchor="start" font-weight="400" fill="#19354b">class Cart:</text>
+<text x="82" y="397" font-size="16" text-anchor="start" font-weight="400" fill="#19354b">def total(self):</text>
+<text x="114" y="424" font-size="16" text-anchor="start" font-weight="400" fill="#19354b">return sum(self.items)</text>
+<text x="50" y="451" font-size="16" text-anchor="start" font-weight="400" fill="#19354b"></text>
+<text x="82" y="478" font-size="16" text-anchor="start" font-weight="400" fill="#19354b">def clear(self):</text>
+<text x="114" y="505" font-size="16" text-anchor="start" font-weight="400" fill="#19354b">self.items.clear()</text>
+<rect x="580" y="300" width="515" height="72" rx="7" fill="#f5f8fb" stroke="#8195a8" stroke-width="1.4"/>
+<text x="837.5" y="331" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">Cart：外层类范围</text>
+<text x="837.5" y="358" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">class_definition</text>
+<rect x="580" y="450" width="240" height="85" rx="7" fill="#eef7f3" stroke="#367d68" stroke-width="1.4"/>
+<text x="700.0" y="481" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">Cart.total</text>
+<text x="700.0" y="508" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">方法源码范围</text>
+<rect x="855" y="450" width="240" height="85" rx="7" fill="#eef7f3" stroke="#367d68" stroke-width="1.4"/>
+<text x="975.0" y="481" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">Cart.clear</text>
+<text x="975.0" y="508" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">方法源码范围</text>
+<polyline points="475,335 580,335" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="580,335 572.0,339.0 572.0,331.0" fill="#58768b"/>
+<polyline points="700,372 700,450" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="700,450 696.0,442.0 704.0,442.0" fill="#58768b"/>
+<polyline points="975,372 975,450" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="975,450 971.0,442.0 979.0,442.0" fill="#58768b"/>
+<text x="30" y="580" font-size="16" text-anchor="start" font-weight="400" fill="#526c81">识别出类与方法，不等于立即拆开；是否整类保留，由后续切片预算决定。</text>
+</g>
+</svg>

@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1300" height="490" viewBox="0 0 1300 490" role="img" aria-labelledby="09-upload-title">
+<title id="09-upload-title">上传流程：先校验，后保存与登记</title>
+<defs><marker id="09-upload-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0L9 4.5L0 9Z" fill="#54758b"/></marker></defs>
+<rect width="1300" height="490" fill="#ffffff"/>
+<g font-family="Microsoft YaHei, PingFang SC, sans-serif" fill="#19354b">
+<text x="30" y="37" font-size="24" text-anchor="start" font-weight="600" fill="#19354b">上传流程：先校验，后保存与登记</text>
+<rect x="30" y="90" width="190" height="110" rx="8" fill="#fff4e3" stroke="#bc852f" stroke-width="1.6"/>
+<text x="125.0" y="120" font-size="19" text-anchor="middle" font-weight="600" fill="#19354b">识别 ZIP</text>
+<text x="125.0" y="147" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">文件后缀为 .zip</text>
+<rect x="240" y="90" width="190" height="110" rx="8" fill="#e9f6ef" stroke="#318366" stroke-width="1.6"/>
+<text x="335.0" y="120" font-size="19" text-anchor="middle" font-weight="600" fill="#19354b">解析参数检查</text>
+<text x="335.0" y="147" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">只能设置切片长度</text>
+<text x="335.0" y="171" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">和是否生成文件概览</text>
+<rect x="450" y="90" width="190" height="110" rx="8" fill="#e9f6ef" stroke="#318366" stroke-width="1.6"/>
+<text x="545.0" y="120" font-size="19" text-anchor="middle" font-weight="600" fill="#19354b">大小检查</text>
+<text x="545.0" y="147" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">边读边计数</text>
+<text x="545.0" y="171" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">超过 10 MiB 即拒绝</text>
+<rect x="660" y="90" width="190" height="110" rx="8" fill="#e9f6ef" stroke="#318366" stroke-width="1.6"/>
+<text x="755.0" y="120" font-size="19" text-anchor="middle" font-weight="600" fill="#19354b">安全预检</text>
+<text x="755.0" y="147" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">真实格式、路径</text>
+<text x="755.0" y="171" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">加密、文件数、深度</text>
+<rect x="870" y="90" width="190" height="110" rx="8" fill="#fff4e3" stroke="#bc852f" stroke-width="1.6"/>
+<text x="965.0" y="120" font-size="19" text-anchor="middle" font-weight="600" fill="#19354b">保存原包</text>
+<text x="965.0" y="147" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">原 ZIP 文件</text>
+<text x="965.0" y="171" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">存入 MinIO / S3</text>
+<rect x="1080" y="90" width="190" height="110" rx="8" fill="#fff4e3" stroke="#bc852f" stroke-width="1.6"/>
+<text x="1175.0" y="120" font-size="19" text-anchor="middle" font-weight="600" fill="#19354b">登记文档</text>
+<text x="1175.0" y="147" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">写入 MySQL 文档表</text>
+<text x="1175.0" y="171" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">解析方式：代码包解析</text>
+<polyline points="220,145 240,145" fill="none" stroke="#54758b" stroke-width="1.8" stroke-linejoin="round"/>
+<polygon points="240,145 231.0,149.0 231.0,141.0" fill="#54758b"/>
+<polyline points="430,145 450,145" fill="none" stroke="#54758b" stroke-width="1.8" stroke-linejoin="round"/>
+<polygon points="450,145 441.0,149.0 441.0,141.0" fill="#54758b"/>
+<polyline points="640,145 660,145" fill="none" stroke="#54758b" stroke-width="1.8" stroke-linejoin="round"/>
+<polygon points="660,145 651.0,149.0 651.0,141.0" fill="#54758b"/>
+<polyline points="850,145 870,145" fill="none" stroke="#54758b" stroke-width="1.8" stroke-linejoin="round"/>
+<polygon points="870,145 861.0,149.0 861.0,141.0" fill="#54758b"/>
+<polyline points="1060,145 1080,145" fill="none" stroke="#54758b" stroke-width="1.8" stroke-linejoin="round"/>
+<polygon points="1080,145 1071.0,149.0 1071.0,141.0" fill="#54758b"/>
+<rect x="1080" y="300" width="190" height="100" rx="8" fill="#f0f4f8" stroke="#8294a8" stroke-width="1.6"/>
+<text x="1175.0" y="330" font-size="19" text-anchor="middle" font-weight="600" fill="#19354b">返回文档</text>
+<text x="1175.0" y="357" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">文档 ID</text>
+<text x="1175.0" y="381" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">状态：未解析</text>
+<polyline points="1175,200 1175,300" fill="none" stroke="#54758b" stroke-width="1.8" stroke-linejoin="round"/>
+<polygon points="1175,300 1171.0,291.0 1179.0,291.0" fill="#54758b"/>
+<rect x="240" y="300" width="610" height="100" rx="8" fill="#fff0ef" stroke="#b36060" stroke-width="1.6"/>
+<text x="545.0" y="330" font-size="19" text-anchor="middle" font-weight="600" fill="#19354b">拒绝上传，返回失败原因码</text>
+<text x="545.0" y="357" font-size="16" text-anchor="middle" font-weight="400" fill="#19354b">不保存文件，不创建文档</text>
+<polyline points="335,200 335,300" fill="none" stroke="#54758b" stroke-width="1.8" stroke-linejoin="round"/>
+<polygon points="335,300 331.0,291.0 339.0,291.0" fill="#54758b"/>
+<rect x="308.5" y="240" width="53.0" height="20" rx="2" fill="#ffffff"/>
+<text x="335" y="255" font-size="15" text-anchor="middle" font-weight="400" fill="#4b667a">不通过</text>
+<polyline points="545,200 545,300" fill="none" stroke="#54758b" stroke-width="1.8" stroke-linejoin="round"/>
+<polygon points="545,300 541.0,291.0 549.0,291.0" fill="#54758b"/>
+<rect x="518.5" y="240" width="53.0" height="20" rx="2" fill="#ffffff"/>
+<text x="545" y="255" font-size="15" text-anchor="middle" font-weight="400" fill="#4b667a">不通过</text>
+<polyline points="755,200 755,300" fill="none" stroke="#54758b" stroke-width="1.8" stroke-linejoin="round"/>
+<polygon points="755,300 751.0,291.0 759.0,291.0" fill="#54758b"/>
+<rect x="728.5" y="240" width="53.0" height="20" rx="2" fill="#ffffff"/>
+<text x="755" y="255" font-size="15" text-anchor="middle" font-weight="400" fill="#4b667a">不通过</text>
+<text x="32" y="465" font-size="15" text-anchor="start" font-weight="400" fill="#657b8d">上传只做校验和登记，不解压源码、不切片、不向量化；解析由“发起解析”接口触发。</text>
+</g>
+</svg>

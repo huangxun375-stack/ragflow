@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="690" viewBox="0 0 1120 690" role="img" aria-labelledby="04-chunking-title">
+<title id="04-chunking-title">切片决策：目标长度用于合并，硬预算决定是否拆分</title>
+<defs><marker id="04-chunking-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8Z" fill="#58768b"/></marker></defs>
+<rect width="1120" height="100%" fill="#ffffff"/>
+<g font-family="Microsoft YaHei, sans-serif" fill="#19354b">
+<text x="28" y="35" font-size="22" text-anchor="start" font-weight="600" fill="#19354b">切片决策：目标长度用于合并，硬预算决定是否拆分</text>
+<rect x="355" y="75" width="410" height="90" rx="7" fill="#f5f8fb" stroke="#8195a8" stroke-width="1.4"/>
+<text x="560.0" y="106" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">同一文件中的连续结构单元</text>
+<text x="560.0" y="133" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">声明 + 需要保留的源码间隙</text>
+<polyline points="450,165 450,205 180,205 180,255" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="180,255 176.0,247.0 184.0,247.0" fill="#58768b"/>
+<polyline points="560,165 560,255" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="560,255 556.0,247.0 564.0,247.0" fill="#58768b"/>
+<polyline points="670,165 670,205 940,205 940,255" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="940,255 936.0,247.0 944.0,247.0" fill="#58768b"/>
+<rect x="30" y="255" width="300" height="190" rx="7" fill="#eef7f3" stroke="#367d68" stroke-width="1.4"/>
+<text x="180.0" y="286" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">小单元：满足目标 T</text>
+<text x="180.0" y="313" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">尝试合并相邻完整单元</text>
+<text x="180.0" y="338" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">合并后仍满足 T 和模型预算</text>
+<text x="180.0" y="363" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">才加入当前片，否则输出当前片</text>
+<rect x="410" y="255" width="300" height="190" rx="7" fill="#eef7f3" stroke="#367d68" stroke-width="1.4"/>
+<text x="560.0" y="286" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">较大单元：满足硬预算</text>
+<text x="560.0" y="313" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">超过目标 T</text>
+<text x="560.0" y="338" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">但满足 H 和模型输入限制</text>
+<text x="560.0" y="363" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">完整独立成片，不强行拆开</text>
+<rect x="790" y="255" width="300" height="190" rx="7" fill="#eef7f3" stroke="#367d68" stroke-width="1.4"/>
+<text x="940.0" y="286" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">超预算：逐级拆分</text>
+<text x="940.0" y="313" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">超过 H 或模型输入限制</text>
+<text x="940.0" y="338" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">有子结构：按成员递归处理</text>
+<text x="940.0" y="363" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">无子结构：语句优先、行、字符</text>
+<rect x="355" y="535" width="410" height="100" rx="7" fill="#f5f8fb" stroke="#8195a8" stroke-width="1.4"/>
+<text x="560.0" y="566" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">整理空白、来源头与输出顺序</text>
+<text x="560.0" y="593" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">不跨文件，不丢正文，不生成纯空白片</text>
+<text x="560.0" y="618" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">每片完整文本重新检查两种预算</text>
+<polyline points="180,445 180,495 450,495 450,535" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="450,535 446.0,527.0 454.0,527.0" fill="#58768b"/>
+<polyline points="560,445 560,535" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="560,535 556.0,527.0 564.0,527.0" fill="#58768b"/>
+<polyline points="940,445 940,495 670,495 670,535" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="670,535 666.0,527.0 674.0,527.0" fill="#58768b"/>
+<text x="30" y="675" font-size="16" text-anchor="start" font-weight="400" fill="#526c81">默认 H = 512、T = 256 token；判断包含来源头，模型预算是另一项必须同时满足的限制。</text>
+</g>
+</svg>

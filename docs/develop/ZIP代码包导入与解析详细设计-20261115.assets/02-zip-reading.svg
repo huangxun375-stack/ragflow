@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="660" viewBox="0 0 1120 660" role="img" aria-labelledby="02-zip-reading-title">
+<title id="02-zip-reading-title">ZIP 安全读取：先全包检查，再逐文件筛选</title>
+<defs><marker id="02-zip-reading-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8Z" fill="#58768b"/></marker></defs>
+<rect width="1120" height="100%" fill="#ffffff"/>
+<g font-family="Microsoft YaHei, sans-serif" fill="#19354b">
+<text x="28" y="35" font-size="22" text-anchor="start" font-weight="600" fill="#19354b">ZIP 安全读取：先全包检查，再逐文件筛选</text>
+<rect x="245" y="75" width="630" height="100" rx="7" fill="#fff4f2" stroke="#b1665c" stroke-width="1.4"/>
+<text x="560.0" y="106" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">安全失败：整包停止</text>
+<text x="560.0" y="133" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">危险路径、加密、异常格式或成员规模超限</text>
+<text x="560.0" y="158" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">读取时超预算、负载损坏或 CRC 错误</text>
+<rect x="20" y="275" width="200" height="110" rx="7" fill="#f5f8fb" stroke="#8195a8" stroke-width="1.4"/>
+<text x="120.0" y="306" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">ZIP 字节</text>
+<text x="120.0" y="333" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">大小已受限</text>
+<text x="120.0" y="358" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">不解压成员到磁盘</text>
+<rect x="240" y="275" width="200" height="110" rx="7" fill="#eef7f3" stroke="#367d68" stroke-width="1.4"/>
+<text x="340.0" y="306" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">全部成员检查</text>
+<text x="340.0" y="333" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">格式、路径、加密</text>
+<text x="340.0" y="358" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">数量、深度及成员冲突</text>
+<rect x="460" y="275" width="200" height="110" rx="7" fill="#eef7f3" stroke="#367d68" stroke-width="1.4"/>
+<text x="560.0" y="306" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">按规则过滤</text>
+<text x="560.0" y="333" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">目录、忽略规则、后缀</text>
+<text x="560.0" y="358" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">隐藏项及声明大小</text>
+<rect x="680" y="275" width="200" height="110" rx="7" fill="#eef7f3" stroke="#367d68" stroke-width="1.4"/>
+<text x="780.0" y="306" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">有界读取</text>
+<text x="780.0" y="333" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">实际字节累计、CRC</text>
+<text x="780.0" y="358" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">文本识别与编码转换</text>
+<rect x="900" y="275" width="200" height="110" rx="7" fill="#eef7f3" stroke="#367d68" stroke-width="1.4"/>
+<text x="1000.0" y="306" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">保留源码</text>
+<text x="1000.0" y="333" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">相对路径、语言</text>
+<text x="1000.0" y="358" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">规范化源码文本</text>
+<polyline points="220,330 240,330" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="240,330 232.0,334.0 232.0,326.0" fill="#58768b"/>
+<polyline points="440,330 460,330" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="460,330 452.0,334.0 452.0,326.0" fill="#58768b"/>
+<polyline points="660,330 680,330" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="680,330 672.0,334.0 672.0,326.0" fill="#58768b"/>
+<polyline points="880,330 900,330" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="900,330 892.0,334.0 892.0,326.0" fill="#58768b"/>
+<polyline points="340,275 340,175" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="340,175 344.0,183.0 336.0,183.0" fill="#58768b"/>
+<text x="340" y="228" font-size="15" text-anchor="middle" font-weight="400" fill="#526c81">元数据不合法</text>
+<polyline points="780,275 780,175" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="780,175 784.0,183.0 776.0,183.0" fill="#58768b"/>
+<text x="780" y="228" font-size="15" text-anchor="middle" font-weight="400" fill="#526c81">读取异常</text>
+<rect x="460" y="480" width="640" height="100" rx="7" fill="#f5f8fb" stroke="#8195a8" stroke-width="1.4"/>
+<text x="780.0" y="511" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">正常过滤：跳过当前文件</text>
+<text x="780.0" y="538" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">依赖目录、不支持后缀、声明过大、隐藏项</text>
+<text x="780.0" y="563" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">规则命中、空文件、二进制或不支持的编码</text>
+<polyline points="560,385 560,480" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="560,480 556.0,472.0 564.0,472.0" fill="#58768b"/>
+<text x="560" y="437" font-size="15" text-anchor="middle" font-weight="400" fill="#526c81">不符合筛选条件</text>
+<polyline points="780,385 780,480" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="780,480 776.0,472.0 784.0,472.0" fill="#58768b"/>
+<text x="870" y="437" font-size="15" text-anchor="middle" font-weight="400" fill="#526c81">内容不是有效源码文本</text>
+<text x="30" y="630" font-size="16" text-anchor="start" font-weight="400" fill="#526c81">全部过滤后无源码：明确失败；危险成员不能因位于忽略目录而免检。</text>
+</g>
+</svg>

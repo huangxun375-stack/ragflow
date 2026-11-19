@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="545" viewBox="0 0 1120 545" role="img" aria-labelledby="05-chunk-example-title">
+<title id="05-chunk-example-title">实际切片示例：connector.go 的前四片</title>
+<defs><marker id="05-chunk-example-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8Z" fill="#58768b"/></marker></defs>
+<rect width="1120" height="100%" fill="#ffffff"/>
+<g font-family="Microsoft YaHei, sans-serif" fill="#19354b">
+<text x="28" y="35" font-size="22" text-anchor="start" font-weight="600" fill="#19354b">实际切片示例：connector.go 的前四片</text>
+<rect x="25" y="100" width="240" height="340" rx="7" fill="#f5f8fb" stroke="#8195a8" stroke-width="1.4"/>
+<text x="145.0" y="131" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">connector.go</text>
+<text x="145.0" y="158" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">同一源文件</text>
+<text x="145.0" y="183" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">按源码位置顺序输出</text>
+<rect x="365" y="75" width="730" height="80" rx="7" fill="#eef7f3" stroke="#367d68" stroke-width="1.4"/>
+<text x="730.0" y="106" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">第 1 片 · L1–L36</text>
+<text x="730.0" y="133" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">package、import、Driver、init、Driver.Open、DialFunc</text>
+<polyline points="265,115 365,115" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="365,115 357.0,119.0 357.0,111.0" fill="#58768b"/>
+<rect x="365" y="175" width="730" height="80" rx="7" fill="#eef7f3" stroke="#367d68" stroke-width="1.4"/>
+<text x="730.0" y="206" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">第 2 片 · L36–L54</text>
+<text x="730.0" y="233" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">LookupFunc、Dialer、DialerContext 及接口方法</text>
+<polyline points="265,215 365,215" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="365,215 357.0,219.0 357.0,211.0" fill="#58768b"/>
+<rect x="365" y="275" width="730" height="80" rx="7" fill="#eef7f3" stroke="#367d68" stroke-width="1.4"/>
+<text x="730.0" y="306" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">第 3 片 · L54–L70</text>
+<text x="730.0" y="333" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">defaultDialer 与 Dial、DialTimeout、DialContext</text>
+<polyline points="265,315 365,315" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="365,315 357.0,319.0 357.0,311.0" fill="#58768b"/>
+<rect x="365" y="375" width="730" height="80" rx="7" fill="#eef7f3" stroke="#367d68" stroke-width="1.4"/>
+<text x="730.0" y="406" font-size="17" text-anchor="middle" font-weight="600" fill="#19354b">第 4 片 · L70–L93</text>
+<text x="730.0" y="433" font-size="16" text-anchor="middle" font-weight="400" fill="#526c81">Connector 与 Connect、Driver 方法</text>
+<polyline points="265,415 365,415" fill="none" stroke="#58768b" stroke-width="1.5" stroke-linejoin="round"/>
+<polygon points="365,415 357.0,419.0 357.0,411.0" fill="#58768b"/>
+<text x="30" y="500" font-size="16" text-anchor="start" font-weight="400" fill="#526c81">切片边界按字节跨度划分，显示行号可以相邻重合；示例不是整份文件的全部切片。</text>
+</g>
+</svg>
