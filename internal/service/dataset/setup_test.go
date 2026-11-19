@@ -31,6 +31,8 @@ func setupServiceTestDB(t *testing.T) *gorm.DB {
 		_ = sqlDB.Close()
 	})
 	models := []interface{}{
+		&entity.DocumentCodeArchive{}, &entity.ArchiveRun{}, &entity.ArchiveAttempt{},
+		&entity.ArchiveDatasetFence{},
 		&entity.Document{},
 		&entity.Knowledgebase{},
 		&entity.Task{},

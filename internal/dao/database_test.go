@@ -565,7 +565,21 @@ func TestAutoMigrateRuntimeModelsNamesFailingTable(t *testing.T) {
 	}
 
 	err = autoMigrateRuntimeModels(t.Context(), db)
-	if err == nil || !strings.Contains(err.Error(), "runtime table ingestion_task") {
+	if err == nil {
 		t.Fatalf("autoMigrateRuntimeModels error = %v, want failing table name", err)
 	}
+	_, detail, ok := strings.Cut(err.Error(), "runtime table ")
+	if !ok {
+		t.Fatalf("migration error lost table context: %v", err)
+	}
+	table, cause, ok := strings.Cut(detail, ": ")
+	if !ok || !strings.Contains(cause, "database is closed") {
+		t.Fatalf("migration error lost database cause: %v", err)
+	}
+	for _, model := range autoMigrateModels() {
+		if named, ok := model.(interface{ TableName() string }); ok && named.TableName() == table {
+			return
+		}
+	}
+	t.Fatalf("migration error names unregistered table %q: %v", table, err)
 }

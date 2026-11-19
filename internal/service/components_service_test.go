@@ -62,7 +62,7 @@ func TestComponentsService_List_FilterIngestion(t *testing.T) {
 		t.Fatalf("List(Ingestion) returned error: %v", err)
 	}
 	wantNames := []string{
-		"extractor", "file", "generalchunker", "grouptitlechunker", "hierarchytitlechunker", "manualchunker",
+		"codearchive", "extractor", "file", "generalchunker", "grouptitlechunker", "hierarchytitlechunker", "manualchunker",
 		"onechunker", "pagechunker", "qachunker", "parser", "tablechunker", "titlechunker", "tokenchunker", "tokenizer",
 	}
 	assertComponentNameSet(t, "ingestion", namesOf(got), wantNames)
@@ -85,7 +85,7 @@ func TestComponentsService_List_FilterIngestionAndShared(t *testing.T) {
 		t.Fatalf("List(Ingestion,Shared) returned error: %v", err)
 	}
 	wantNames := []string{
-		"extractor", "file", "generalchunker", "grouptitlechunker", "hierarchytitlechunker", "manualchunker",
+		"codearchive", "extractor", "file", "generalchunker", "grouptitlechunker", "hierarchytitlechunker", "manualchunker",
 		"onechunker", "pagechunker", "qachunker", "parser", "tablechunker", "titlechunker", "tokenchunker", "tokenizer",
 	}
 	assertComponentNameSet(t, "ingestion+shared", namesOf(got), wantNames)
@@ -104,7 +104,7 @@ func TestComponentsService_List_FilterDuplicates(t *testing.T) {
 		t.Fatalf("List(Ingestion x3) returned error: %v", err)
 	}
 	wantNames := []string{
-		"extractor", "file", "generalchunker", "grouptitlechunker", "hierarchytitlechunker", "manualchunker",
+		"codearchive", "extractor", "file", "generalchunker", "grouptitlechunker", "hierarchytitlechunker", "manualchunker",
 		"onechunker", "pagechunker", "qachunker", "parser", "tablechunker", "titlechunker", "tokenchunker", "tokenizer",
 	}
 	if len(got) != len(wantNames) {
@@ -132,6 +132,32 @@ func TestComponentsService_List_DescriptorShape(t *testing.T) {
 		}
 		if d.Outputs == nil {
 			t.Errorf("descriptor %q has nil outputs", d.Name)
+		}
+	}
+}
+
+func TestComponentsService_CodeArchiveRegisteredOnlyForIngestion(t *testing.T) {
+	svc := NewComponentsService()
+	for _, category := range []runtime.Category{runtime.CategoryIngestion, runtime.CategoryAgent} {
+		components, err := svc.List(category)
+		if err != nil {
+			t.Fatal(err)
+		}
+		count := 0
+		for _, component := range components {
+			if component.Name == "codearchive" {
+				count++
+				if component.Category != "ingestion" || component.Inputs == nil || component.Outputs == nil {
+					t.Fatalf("invalid archive descriptor: %+v", component)
+				}
+			}
+		}
+		want := 0
+		if category == runtime.CategoryIngestion {
+			want = 1
+		}
+		if count != want {
+			t.Fatalf("category %s has %d archive components, want %d", category, count, want)
 		}
 	}
 }

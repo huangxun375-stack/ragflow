@@ -72,8 +72,14 @@ func (d *tokenBoundDriver) Embed(ctx context.Context, modelName *string, request
 	return d.stubDriver.Embed(ctx, modelName, request, apiConfig, embeddingConfig, usage)
 }
 
-func newLimitEmbedder(driver models.ModelDriver, declaredMaxTokens int) *embedder {
-	return &embedder{model: models.NewEmbeddingModel(driver, strPtr("stub"), &models.APIConfig{}, declaredMaxTokens)}
+func newLimitEmbedder(t *testing.T, driver models.ModelDriver, declaredMaxTokens int) *embedder {
+	t.Helper()
+	emb := &embedder{model: models.NewEmbeddingModel(driver, strPtr("stub"), &models.APIConfig{BaseURL: strPtr("https://embedding.example.invalid/" + t.Name())}, declaredMaxTokens)}
+	calibration := tokenizer.DefaultCalibration()
+	key := string(emb.quotaKey())
+	calibration.Reset(key)
+	t.Cleanup(func() { calibration.Reset(key) })
+	return emb
 }
 
 func TestIsOverLimitErrClassification(t *testing.T) {
@@ -192,7 +198,7 @@ func TestDistributeTokenCountFallsBackToOwnCountWithoutUsage(t *testing.T) {
 func TestEmbedderEncodeShrinksUntilTheProviderAccepts(t *testing.T) {
 	freezeBackoff(t)
 	driver := &tokenBoundDriver{maxTokens: 2000}
-	emb := newLimitEmbedder(driver, 8192)
+	emb := newLimitEmbedder(t, driver, 8192)
 
 	long := strings.Repeat("the quick brown fox jumps over the lazy dog ", 500) // ~5500 cl100k tokens
 	vecs, err := emb.Encode(context.Background(), []string{long, long, long})
@@ -229,7 +235,7 @@ func TestEmbedderEncodeShrinksUntilTheProviderAccepts(t *testing.T) {
 func TestEmbedderEncodeIsolatesPathologicalInput(t *testing.T) {
 	freezeBackoff(t)
 	driver := &tokenBoundDriver{maxTokens: 200, batchOnly: true}
-	emb := newLimitEmbedder(driver, 8192)
+	emb := newLimitEmbedder(t, driver, 8192)
 
 	long := strings.Repeat("lorem ipsum dolor sit amet ", 200)
 	vecs, err := emb.Encode(context.Background(), []string{"short one", long, "short two"})
@@ -245,7 +251,7 @@ func TestEmbedderEncodeIsolatesPathologicalInput(t *testing.T) {
 }
 
 func TestEmbedderEncodeEmptyInput(t *testing.T) {
-	emb := newLimitEmbedder(&stubDriver{}, 8192)
+	emb := newLimitEmbedder(t, &stubDriver{}, 8192)
 	vecs, err := emb.Encode(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("Encode(nil) returned %v", err)
@@ -259,7 +265,7 @@ func TestEmbedderEncodeEmptyInput(t *testing.T) {
 // on: the embedder's Trim honours the declared window with a proportional margin
 // (not a flat 10 tokens), and never hands back more than the limit allows.
 func TestEmbedderTrimPrefersModelTokenizer(t *testing.T) {
-	emb := newLimitEmbedder(&stubDriver{}, 8192)
+	emb := newLimitEmbedder(t, &stubDriver{}, 8192)
 	if got := emb.ResolveMaxTokens(); got != 8192 {
 		t.Fatalf("ResolveMaxTokens() = %d, want the declared 8192", got)
 	}
@@ -273,7 +279,7 @@ func TestEmbedderTrimPrefersModelTokenizer(t *testing.T) {
 		t.Fatalf("trimmed text counts %d tokens, limit is %d", got, limit)
 	}
 	// Defaults are also honoured when a model declares nothing.
-	unset := newLimitEmbedder(&stubDriver{}, 0)
+	unset := newLimitEmbedder(t, &stubDriver{}, 0)
 	if got := unset.ResolveMaxTokens(); got != tokenizer.EmbeddingTokenLimitDefault {
 		t.Fatalf("ResolveMaxTokens() with no declaration = %d, want %d", got, tokenizer.EmbeddingTokenLimitDefault)
 	}
@@ -288,7 +294,7 @@ func TestEmbedderTrimPrefersModelTokenizer(t *testing.T) {
 // pin a family.
 func TestEmbedderEncodeRefusesToSubstituteTheCalibratedEstimate(t *testing.T) {
 	t.Setenv("TOKENIZER_EMBEDDING_TOKENIZER", "no-such-family")
-	emb := newLimitEmbedder(&stubDriver{}, 8192)
+	emb := newLimitEmbedder(t, &stubDriver{}, 8192)
 	_, err := emb.Encode(context.Background(), []string{"hello"})
 	if err == nil {
 		t.Fatal("Encode succeeded with an unavailable declared tokenizer; it must refuse instead")

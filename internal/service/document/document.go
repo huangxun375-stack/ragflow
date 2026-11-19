@@ -80,6 +80,7 @@ type UpdateDocumentRequest struct {
 
 // DocumentResponse document response
 type DocumentResponse struct {
+	*ArchiveMetadata
 	ID                      string                      `json:"id"`
 	Name                    *string                     `json:"name,omitempty"`
 	KbID                    string                      `json:"kb_id"`
@@ -125,14 +126,15 @@ type UpdateDatasetDocumentRequest struct {
 	Name     *string `json:"name"`
 	ParserID *string `json:"parser_id"`
 	// ChunkMethod is the public alias for parser_id (Python UpdateDocumentReq).
-	ChunkMethod  *string        `json:"chunk_method"`
-	ChunkCount   *int64         `json:"chunk_count"`
-	TokenCount   *int64         `json:"token_count"`
-	PipelineID   *string        `json:"pipeline_id"`
-	Enabled      *int           `json:"enabled"`
-	Progress     *float64       `json:"progress"`
-	ParserConfig map[string]any `json:"parser_config"`
-	MetaFields   map[string]any `json:"meta_fields"`
+	ChunkMethod              *string        `json:"chunk_method"`
+	ChunkCount               *int64         `json:"chunk_count"`
+	TokenCount               *int64         `json:"token_count"`
+	PipelineID               *string        `json:"pipeline_id"`
+	Enabled                  *int           `json:"enabled"`
+	Progress                 *float64       `json:"progress"`
+	ParserConfig             map[string]any `json:"parser_config"`
+	UnscopedParserConfigKeys []string       `json:"-"`
+	MetaFields               map[string]any `json:"meta_fields"`
 	// PipelineVersionID pins the document to a specific dataflow canvas version
 	// (design section 5/C2). Empty/omitted means the latest version is used.
 	PipelineVersionID *string `json:"pipeline_version_id,omitempty"`
@@ -142,6 +144,7 @@ type UpdateDatasetDocumentRequest struct {
 }
 
 type UpdateDatasetDocumentResponse struct {
+	*ArchiveMetadata
 	ID                   string                      `json:"id"`
 	Thumbnail            *string                     `json:"thumbnail,omitempty"`
 	DatasetID            string                      `json:"dataset_id"`

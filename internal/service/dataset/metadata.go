@@ -9,9 +9,11 @@ import (
 	"ragflow/internal/common"
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
+	"ragflow/internal/parser/codearchive"
 	"ragflow/internal/permission"
 	permissionresponse "ragflow/internal/permission/response"
 	"ragflow/internal/service"
+	"ragflow/internal/utility"
 )
 
 // UpdateDocumentMetadataConfig updates the metadata config for a document in a dataset.
@@ -30,6 +32,9 @@ func (d *DatasetService) UpdateDocumentMetadataConfig(ctx context.Context, datas
 		return nil, common.CodeServerError, errors.New("database operation failed")
 	}
 
+	if doc.ParserID == "code_archive" || doc.Type == "code" || strings.EqualFold(strings.TrimPrefix(doc.Suffix, "."), "zip") || doc.Name != nil && utility.IsArchiveFilename(*doc.Name) {
+		return nil, common.CodeDataError, fmt.Errorf("%w: code archives do not support metadata extractor configuration", &codearchive.Error{Code: "ZIP_CONFIG_LOCKED"})
+	}
 	metadata, ok := req["metadata"]
 	if !ok {
 		return nil, common.CodeArgumentError, errors.New("metadata is required")

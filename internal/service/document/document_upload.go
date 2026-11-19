@@ -2,6 +2,7 @@ package document
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -10,7 +11,9 @@ import (
 	"ragflow/internal/common"
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
+	"ragflow/internal/parser/codearchive"
 	"ragflow/internal/permission"
+	"ragflow/internal/server"
 	"ragflow/internal/service"
 	"ragflow/internal/storage"
 	"ragflow/internal/utility"
@@ -31,23 +34,19 @@ import (
 //
 // Gaps vs Python (documented, not yet ported): thumbnail generation and
 // read_potential_broken_pdf repair.
-func (s *DocumentService) UploadLocalDocuments(ctx context.Context, kb *entity.Knowledgebase, files []*multipart.FileHeader, parentPath string, parserConfigOverride map[string]interface{}) ([]map[string]interface{}, []string) {
+func (s *DocumentService) UploadLocalDocuments(ctx context.Context, kb *entity.Knowledgebase, files []*multipart.FileHeader, parentPath string, parserConfigOverride map[string]interface{}) ([]map[string]interface{}, []UploadFailure) {
 	userID := permission.UserIDFromContext(ctx)
 	if userID == "" {
-		return nil, []string{permission.ErrUnauthenticated.Error()}
+		return nil, []UploadFailure{uploadFailure("", permission.ErrUnauthenticated)}
 	}
 	storageImpl := storage.GetStorageFactory().GetStorage()
 	if storageImpl == nil {
-		return nil, []string{"storage not initialized"}
+		return nil, []UploadFailure{uploadFailure("", errors.New("storage not initialized"))}
 	}
 
-	// Resolve (and create if needed) the dataset's file-manager folder up front.
-	// Without the File / file2document linkage the document list (which inner-joins
-	// file2document + file) would never surface the uploaded files.
-	kbFolder, err := s.ensureKBFolder(ctx, kb, userID)
-	if err != nil {
-		return nil, []string{err.Error()}
-	}
+	// Do not create file-manager records until a file has passed validation.
+	var kbFolder *entity.File
+	var err error
 
 	// Merge parser_config override (allow-listed keys only) over the dataset config.
 	merged := entity.JSONMap{}
@@ -61,51 +60,95 @@ func (s *DocumentService) UploadLocalDocuments(ctx context.Context, kb *entity.K
 	safeParent := utility.SanitizeFilename(parentPath)
 
 	var results []map[string]interface{}
-	var errMsgs []string
+	var failures []UploadFailure
 
 	for _, fh := range files {
+		if fh == nil {
+			failures = append(failures, uploadFailure("", errors.New("No file selected!")))
+			continue
+		}
+		if codearchive.IsArchive(fh.Filename) {
+			if !server.SupportsCodeArchive() {
+				failures = append(failures, uploadFailure(fh.Filename, &codearchive.Error{Code: "ZIP_UNSUPPORTED_DEPLOYMENT"}))
+				continue
+			}
+			if err := service.ValidateCodeArchiveConfig(parserConfigOverride); err != nil {
+				failures = append(failures, uploadFailure(fh.Filename, err))
+				continue
+			}
+		} else if kb.ParserID == codearchive.ParserID {
+			failures = append(failures, uploadFailure(fh.Filename, &codearchive.Error{Code: "ZIP_ONLY"}))
+			continue
+		}
 		var blob []byte
 		blob, err = readFileHeaderBytes(fh)
 		if err != nil {
-			errMsgs = append(errMsgs, fh.Filename+": "+err.Error())
+			failures = append(failures, uploadFailure(fh.Filename, err))
 			continue
+		}
+		if codearchive.IsArchive(fh.Filename) {
+			if err := codearchive.Precheck(blob, server.GetCodeArchivePolicy().Limits); err != nil {
+				failures = append(failures, uploadFailure(fh.Filename, err))
+				continue
+			}
 		}
 
 		filename, err := common.UniqueFileName(fh.Filename, common.NameLimit255, func(candidate string) (bool, error) {
 			return s.documentDAO.NameExistsInKB(ctx, dao.DB, kb.ID, candidate)
 		})
 		if err != nil {
-			errMsgs = append(errMsgs, fh.Filename+": "+err.Error())
+			failures = append(failures, uploadFailure(fh.Filename, err))
 			continue
 		}
 
 		filetype := utility.FilenameType(filename)
 		if filetype == utility.FileTypeOTHER {
-			errMsgs = append(errMsgs, fh.Filename+": This type of file has not been supported yet!")
+			failures = append(failures, uploadFailure(fh.Filename, errors.New("This type of file has not been supported yet!")))
 			continue
+		}
+		archiveUpload := codearchive.IsArchive(filename)
+		if kbFolder == nil && !archiveUpload {
+			kbFolder, err = s.ensureKBFolder(ctx, kb, userID)
+			if err != nil {
+				failures = append(failures, uploadFailure(fh.Filename, err))
+				continue
+			}
 		}
 
 		var location string
+		objectName := filename
+		if archiveUpload {
+			objectName = common.GenerateToken() + ".zip"
+		}
 		for attempt := 0; ; attempt++ {
-			location = storageObjectPath(safeParent, filename, attempt)
+			location = storageObjectPath(safeParent, objectName, attempt)
 			if !storageImpl.ObjExist(ctx, kb.ID, location) {
 				break
 			}
 		}
 		if err = storageImpl.Put(ctx, kb.ID, location, blob); err != nil {
-			errMsgs = append(errMsgs, fh.Filename+": "+err.Error())
+			failures = append(failures, uploadFailure(fh.Filename, err))
 			continue
 		}
 
 		selection, parserConfig := resolveDocumentParser(ctx, kb, filename, filetype, merged)
 		doc := s.newDatasetDocument(kb, userID, filename, location, string(filetype), selection, parserConfig, "local", int64(len(blob)), blob)
-		if err = s.InsertDocument(ctx, doc); err != nil {
+		if archiveUpload {
+			err = s.registerArchiveDocument(ctx, kb, doc, userID)
+		} else {
+			err = s.InsertDocument(ctx, doc)
+		}
+		if err != nil {
 			// Roll back the orphaned blob so a failed insert doesn't leak storage.
 			rmErr := removeObjectBestEffort(ctx, storageImpl, kb.ID, location)
 			if rmErr != nil {
 				common.Warn(fmt.Sprintf("upload rollback: failed to remove orphaned blob %s/%s: %v", kb.ID, location, rmErr))
 			}
-			errMsgs = append(errMsgs, fh.Filename+": "+err.Error())
+			failures = append(failures, uploadFailure(fh.Filename, err))
+			continue
+		}
+		if archiveUpload {
+			results = append(results, docToRawMap(doc))
 			continue
 		}
 		if err = s.addFileFromKB(ctx, doc, kbFolder.ID, kb.TenantID); err != nil {
@@ -116,13 +159,13 @@ func (s *DocumentService) UploadLocalDocuments(ctx context.Context, kb *entity.K
 			if rmErr != nil {
 				common.Warn(fmt.Sprintf("UploadLocalDocuments: failed to remove blob %s/%s: %v", kb.ID, location, rmErr))
 			}
-			errMsgs = append(errMsgs, fh.Filename+": "+err.Error())
+			failures = append(failures, uploadFailure(fh.Filename, err))
 			continue
 		}
 		results = append(results, docToRawMap(doc))
 	}
 
-	return results, errMsgs
+	return results, failures
 }
 
 // storageObjectPath builds the persisted object key for an upload. Display
@@ -138,6 +181,9 @@ func storageObjectPath(parent, filename string, attempt int) string {
 
 // UploadEmptyDocument inserts a zero-byte "virtual" document into the dataset.
 func (s *DocumentService) UploadEmptyDocument(ctx context.Context, kb *entity.Knowledgebase, name string) (map[string]interface{}, common.ErrorCode, error) {
+	if codearchive.IsArchive(name) || kb.ParserID == codearchive.ParserID {
+		return nil, common.CodeDataError, fmt.Errorf("%w: code archives require a local ZIP upload", &codearchive.Error{Code: "ZIP_ONLY"})
+	}
 	userID := permission.UserIDFromContext(ctx)
 	if userID == "" {
 		return nil, common.CodeUnauthorized, permission.ErrUnauthenticated
@@ -179,18 +225,23 @@ func (s *DocumentService) ensureKBFolder(ctx context.Context, kb *entity.Knowled
 			Where("id = ? AND tenant_id = ?", kb.ID, kb.TenantID).Take(&current).Error; err != nil {
 			return err
 		}
-		root, err := s.fileDAO.GetRootFolder(ctx, tx, tenantID)
-		if err != nil {
-			return err
-		}
-		kbRoot, err := s.newAFileFromKB(ctx, tx, tenantID, knowledgebaseFolderName, root.ID)
-		if err != nil {
-			return err
-		}
-		kbFolder, err = s.newAFileFromKB(ctx, tx, current.TenantID, current.Name, kbRoot.ID)
+		var err error
+		kbFolder, err = s.ensureKBFolderInTransaction(ctx, tx, &current, tenantID)
 		return err
 	})
 	return kbFolder, err
+}
+
+func (s *DocumentService) ensureKBFolderInTransaction(ctx context.Context, tx *gorm.DB, kb *entity.Knowledgebase, userID string) (*entity.File, error) {
+	root, err := s.fileDAO.GetRootFolder(ctx, tx, userID)
+	if err != nil {
+		return nil, err
+	}
+	kbRoot, err := s.newAFileFromKB(ctx, tx, userID, knowledgebaseFolderName, root.ID)
+	if err != nil {
+		return nil, err
+	}
+	return s.newAFileFromKB(ctx, tx, kb.TenantID, kb.Name, kbRoot.ID)
 }
 
 // newAFileFromKB returns the existing folder named name under parentID, or
@@ -268,6 +319,9 @@ func (s *DocumentService) addFileFromKB(ctx context.Context, doc *entity.Documen
 }
 
 func (s *DocumentService) UploadWebDocument(ctx context.Context, kb *entity.Knowledgebase, name, url string) (map[string]interface{}, common.ErrorCode, error) {
+	if codearchive.IsArchive(name) || utility.IsArchiveURL(url) || kb.ParserID == codearchive.ParserID {
+		return nil, common.CodeDataError, fmt.Errorf("%w: code archives require a local ZIP upload", &codearchive.Error{Code: "ZIP_LOCAL_UPLOAD_ONLY"})
+	}
 	userID := permission.UserIDFromContext(ctx)
 	if userID == "" {
 		return nil, common.CodeUnauthorized, permission.ErrUnauthenticated
@@ -289,6 +343,9 @@ func (s *DocumentService) UploadWebDocument(ctx context.Context, kb *entity.Know
 	contentType := ""
 	if headers != nil {
 		contentType = headers.Get("Content-Type")
+	}
+	if utility.IsArchiveContent(name, contentType) {
+		return nil, common.CodeDataError, fmt.Errorf("%w: code archives require a local ZIP upload", &codearchive.Error{Code: "ZIP_LOCAL_UPLOAD_ONLY"})
 	}
 	filename, ok := normalizeWebDocumentName(name, contentType, blob)
 	if !ok {
@@ -387,6 +444,10 @@ func (s *DocumentService) newDatasetDocument(kb *entity.Knowledgebase, tenantID,
 		Suffix:            suffix,
 		Status:            &status,
 	}
+	if parserID == codearchive.ParserID {
+		doc.PipelineID, doc.PipelineVersionID = nil, nil
+		doc.ParserConfig = codeArchiveConfig(parserConfig)
+	}
 	if blob != nil {
 		hash := contentHashHex(blob)
 		doc.ContentHash = &hash
@@ -431,12 +492,23 @@ func docToRawMap(doc *entity.Document) map[string]interface{} {
 	if doc.ContentHash != nil {
 		m["content_hash"] = *doc.ContentHash
 	}
+	if isArchiveDocument(doc) {
+		m["archive_status"], m["archive_run_id"], m["archive_failure_reason"] = "unstart", nil, ""
+		m["pipeline_id"], m["pipeline_version_id"] = nil, nil
+	}
 	return m
 }
 
 func readFileHeaderBytes(fh *multipart.FileHeader) ([]byte, error) {
 	maxBytes := common.GetMaxDocumentUploadBytes()
+	isArchive := codearchive.IsArchive(fh.Filename)
+	if isArchive && server.GetCodeArchivePolicy().Limits.MaxCompressedBytes < maxBytes {
+		maxBytes = server.GetCodeArchivePolicy().Limits.MaxCompressedBytes
+	}
 	if fh.Size > maxBytes {
+		if isArchive {
+			return nil, &codearchive.Error{Code: "ZIP_SIZE_EXCEEDED"}
+		}
 		return nil, fmt.Errorf("file exceeds the maximum allowed size of %d bytes", maxBytes)
 	}
 	src, err := fh.Open()
@@ -449,6 +521,9 @@ func readFileHeaderBytes(fh *multipart.FileHeader) ([]byte, error) {
 		return nil, err
 	}
 	if int64(len(blob)) > maxBytes {
+		if isArchive {
+			return nil, &codearchive.Error{Code: "ZIP_SIZE_EXCEEDED"}
+		}
 		return nil, fmt.Errorf("file exceeds the maximum allowed size of %d bytes", maxBytes)
 	}
 	return blob, nil

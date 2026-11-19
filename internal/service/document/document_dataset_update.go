@@ -86,6 +86,15 @@ func (s *DocumentService) BatchUpdateDocumentStatus(ctx context.Context, dataset
 		if !ok {
 			continue
 		}
+		if isArchiveDocument(doc) {
+			if err := s.setArchiveDocumentStatus(ctx, doc, kb, statusInt); err != nil {
+				result[docID] = map[string]string{"error": err.Error()}
+				hasError = true
+				continue
+			}
+			result[docID] = map[string]string{"status": status}
+			continue
+		}
 
 		currentStatus := ""
 		if doc.Status != nil {
@@ -259,7 +268,13 @@ func (s *DocumentService) UpdateDatasetDocument(ctx context.Context, datasetID, 
 	}
 
 	parserUpdates := map[string]interface{}{}
-	if sel != nil || hasConfig {
+	if isArchiveDocument(doc) {
+		parserUpdates["parser_id"] = "code_archive"
+		parserUpdates["pipeline_id"] = nil
+		parserUpdates["pipeline_version_id"] = nil
+		parserUpdates["parser_config"] = codeArchiveConfig(doc.ParserConfig, req.ParserConfig)
+	}
+	if (sel != nil || hasConfig) && !isArchiveDocument(doc) {
 		dslJSON, err := service.LoadPipelineDSL(ctx, isPipeline, effParserID, effPipelineID, effectiveVersionID)
 		if err != nil {
 			return nil, common.CodeDataError, err
@@ -335,7 +350,7 @@ func (s *DocumentService) UpdateDatasetDocument(ctx context.Context, datasetID, 
 		}
 	}
 
-	if sel != nil {
+	if sel != nil && !isArchiveDocument(doc) {
 		if isPipeline {
 			parserUpdates["pipeline_id"] = *effPipelineID
 		} else {
@@ -424,6 +439,9 @@ func (s *DocumentService) validateDocumentModifiable(ctx context.Context, doc *e
 func (s *DocumentService) validateDatasetDocumentUpdate(ctx context.Context, datasetID, documentID string, doc *entity.Document, req *UpdateDatasetDocumentRequest, present map[string]bool) (common.ErrorCode, error) {
 	if req == nil {
 		return common.CodeDataError, errors.New("invalid request payload")
+	}
+	if err := validateArchiveDocumentUpdate(doc, req, present); err != nil {
+		return common.CodeDataError, err
 	}
 
 	if len(present) > 0 {
@@ -577,7 +595,9 @@ func (s *DocumentService) updateDocumentNameOnly(ctx context.Context, doc *entit
 		}
 	}
 
-	if s.docEngine == nil {
+	// Archive chunk titles are source paths. Renaming the container must not
+	// overwrite those paths or retokenize source titles as the ZIP filename.
+	if isArchiveDocument(doc) || s.docEngine == nil {
 		return nil
 	}
 
@@ -622,6 +642,12 @@ func (s *DocumentService) updateDocumentParserConfig(ctx context.Context, docume
 	}
 
 	merged := common.DeepMergeMaps(doc.ParserConfig, config)
+	if isArchiveDocument(doc) {
+		if err := service.ValidateCodeArchiveConfig(config); err != nil {
+			return err
+		}
+		merged = codeArchiveConfig(doc.ParserConfig, config)
+	}
 	pipelinepkg.ApplyParentChildChunkerConfig(merged, config)
 
 	return s.documentDAO.UpdateByID(ctx, dao.DB, documentID, map[string]interface{}{
@@ -650,7 +676,16 @@ func (s *DocumentService) toUpdateDatasetDocumentResponse(ctx context.Context, d
 		common.Warn(fmt.Sprintf("get latest ingestion event for document %s: %v", doc.ID, err))
 		latestEventsByDocument = make(map[string]*service.IngestionEventItem)
 	}
+	var archiveMeta *ArchiveMetadata
+	if isArchiveDocument(doc) {
+		metadata, err := archiveMetadataByDocuments(ctx, []*entity.Document{doc})
+		if err != nil {
+			return nil, err
+		}
+		archiveMeta = ArchiveMetadataFor(metadata[doc.ID])
+	}
 	return &UpdateDatasetDocumentResponse{
+		ArchiveMetadata:      archiveMeta,
 		ID:                   doc.ID,
 		Thumbnail:            doc.Thumbnail,
 		DatasetID:            doc.KbID,

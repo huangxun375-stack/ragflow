@@ -29,7 +29,10 @@ func TestBuiltinParserVisionSettings(t *testing.T) {
 	if len(registry.Refs()) == 0 {
 		t.Fatal("no builtin templates")
 	}
-	for _, ref := range registry.Refs() {
+	// The public parser catalog contains the vision-capable document parsers.
+	// ZIP's internal CodeArchive graph has no generic Parser or vision stage.
+	for _, meta := range registry.List().BuiltinPipelines {
+		ref := meta.ParserID
 		t.Run(ref, func(t *testing.T) {
 			template, ok := registry.Get(ref)
 			if !ok {

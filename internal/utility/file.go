@@ -47,6 +47,7 @@ const (
 	FileTypeVISUAL   FileType = "visual"
 	FileTypeAURAL    FileType = "aural"
 	FileTypeFOLDER   FileType = "folder"
+	FileTypeCODE     FileType = "code"
 	FileTypeOTHER    FileType = "other"
 )
 
@@ -97,6 +98,9 @@ func normalizeFilename(filename string) (string, bool) {
 // GetFileType classifies a filename by its case-insensitive extension.
 // It returns FileTypeOTHER when the extension is missing or unsupported.
 func GetFileType(filename string) FileType {
+	if IsArchiveFilename(filename) {
+		return FileTypeCODE
+	}
 
 	ext := filepath.Ext(filename)
 	var suffix string
@@ -111,6 +115,8 @@ func GetFileType(filename string) FileType {
 	}
 
 	switch suffix {
+	case "zip":
+		return FileTypeCODE
 	case "pdf":
 		return FileTypePDF
 	case "xls", "et", "ett":
@@ -171,6 +177,9 @@ func FilenameType(filename string) FileType {
 	if IsVideoFilename(normalized) {
 		return FileTypeVISUAL
 	}
+	if IsArchiveFilename(normalized) {
+		return FileTypeCODE
+	}
 
 	if matched, _ := regexp.MatchString(`.*\.pdf$`, normalized); matched {
 		return FileTypePDF
@@ -208,6 +217,21 @@ func FilenameType(filename string) FileType {
 	}
 
 	return FileTypeOTHER
+}
+
+// IsArchiveFilename identifies ZIP code snapshots.
+func IsArchiveFilename(filename string) bool {
+	return strings.EqualFold(filepath.Ext(strings.TrimSpace(filename)), ".zip")
+}
+
+func IsArchiveContent(filename, contentType string) bool {
+	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	return IsArchiveFilename(filename) || mediaType == "application/zip" || mediaType == "application/x-zip-compressed"
+}
+
+func IsArchiveURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	return err == nil && IsArchiveFilename(parsed.Path)
 }
 
 func SanitizeFilename(filename string) string {

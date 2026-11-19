@@ -331,6 +331,7 @@ func TestCompiledEvidenceGateEmptyWithoutClaimRows(t *testing.T) {
 // expensive call in the loop - returns the anchors' compiled statements on the
 // first attempt and the original prose only when the caller asks for raw.
 func TestListChunksServesCompiledEvidenceBeforeText(t *testing.T) {
+	setupArchiveVisibilityTestDB(t)
 	fe := &grepFakeEngine{
 		regexpChunks: []map[string]interface{}{
 			{"id": "c1", "content_with_weight": "prose one", "doc_id": "d1", "docnm_kwd": "doc1", "kb_id": "kb1", "chunk_order_int": float64(0)},

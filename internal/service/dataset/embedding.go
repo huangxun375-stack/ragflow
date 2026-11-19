@@ -14,6 +14,7 @@ import (
 	"ragflow/internal/permission"
 	permissionresponse "ragflow/internal/permission/response"
 	"ragflow/internal/service"
+	"ragflow/internal/service/archivepublication"
 
 	enginetypes "ragflow/internal/engine/types"
 )
@@ -102,6 +103,9 @@ func (d *DatasetService) CheckEmbedding(ctx context.Context, datasetID string, r
 		if len(chunkMap) == 0 {
 			return nil, common.CodeServerError, fmt.Errorf("sampled chunk %s was not found", sample.ChunkID)
 		}
+		if err := archivepublication.CheckRows(ctx, dao.DB, []string{datasetID}, []map[string]any{chunkMap}); err != nil {
+			return nil, common.CodeServerError, err
+		}
 
 		title := datasetString(chunkMap["title_tks"])
 		content := datasetString(chunkMap["content_ltks"])
@@ -181,21 +185,26 @@ func (d *DatasetService) CheckEmbedding(ctx context.Context, datasetID string, r
 
 func (d *DatasetService) sampleRandomChunksWithVectors(ctx context.Context, tenantID, datasetID string, n int) ([]embeddingCheckSample, error) {
 	indexName := fmt.Sprintf("ragflow_%s", tenantID)
+	filter, err := archivepublication.Filter(ctx, dao.DB, []string{datasetID}, nil, map[string]any{"kb_id": datasetID, "available_int": 1})
+	if err != nil {
+		return nil, err
+	}
 	totalResult, err := d.docEngine.Search(ctx, &enginetypes.SearchRequest{
-		IndexNames: []string{indexName},
-		KbIDs:      []string{datasetID},
-		Offset:     0,
-		Limit:      1,
-		Filter: map[string]interface{}{
-			"kb_id":         datasetID,
-			"available_int": 1,
-		},
+		IndexNames:   []string{indexName},
+		KbIDs:        []string{datasetID},
+		Offset:       0,
+		Limit:        1,
+		Filter:       filter,
+		SelectFields: append([]string{"id", "doc_id"}, archivepublication.ReadSourceFields()...),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to count chunks for dataset %s: %w", datasetID, err)
 	}
 	if totalResult == nil || totalResult.Total <= 0 {
 		return []embeddingCheckSample{}, nil
+	}
+	if err := archivepublication.CheckRows(ctx, dao.DB, []string{datasetID}, totalResult.Chunks); err != nil {
+		return nil, err
 	}
 
 	total := int(totalResult.Total)
@@ -223,6 +232,7 @@ func (d *DatasetService) sampleRandomChunksWithVectors(ctx context.Context, tena
 	sort.Ints(offsets)
 
 	baseFields := []string{"docnm_kwd", "doc_id", "content_with_weight", "page_num_int", "position_int", "top_int"}
+	baseFields = append(baseFields, archivepublication.ReadSourceFields()...)
 	samples := make([]embeddingCheckSample, 0, n)
 	var lastSampleErr error
 	for _, offset := range offsets {
@@ -232,10 +242,7 @@ func (d *DatasetService) sampleRandomChunksWithVectors(ctx context.Context, tena
 			Offset:       offset,
 			Limit:        1,
 			SelectFields: baseFields,
-			Filter: map[string]interface{}{
-				"kb_id":         datasetID,
-				"available_int": 1,
-			},
+			Filter:       filter,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to sample chunk at offset %d for dataset %s: %w", offset, datasetID, err)
@@ -243,6 +250,9 @@ func (d *DatasetService) sampleRandomChunksWithVectors(ctx context.Context, tena
 		if searchResult == nil || len(searchResult.Chunks) == 0 {
 			lastSampleErr = fmt.Errorf("chunk search returned no result at offset %d for dataset %s", offset, datasetID)
 			continue
+		}
+		if err := archivepublication.CheckRows(ctx, dao.DB, []string{datasetID}, searchResult.Chunks); err != nil {
+			return nil, err
 		}
 		chunkID := datasetChunkID(searchResult.Chunks[0])
 		if chunkID == "" {
@@ -257,6 +267,9 @@ func (d *DatasetService) sampleRandomChunksWithVectors(ctx context.Context, tena
 		if len(chunkMap) == 0 {
 			lastSampleErr = fmt.Errorf("sampled chunk %s was not found in dataset %s", chunkID, datasetID)
 			continue
+		}
+		if err := archivepublication.CheckRows(ctx, dao.DB, []string{datasetID}, []map[string]any{chunkMap}); err != nil {
+			return nil, err
 		}
 		vectorField := datasetGuessVecField(chunkMap)
 		vector := datasetAsFloatVec(chunkMap[vectorField])

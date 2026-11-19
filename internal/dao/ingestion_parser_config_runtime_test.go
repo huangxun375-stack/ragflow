@@ -332,7 +332,13 @@ func TestIngestionMigrationMatchesBuiltinTemplates(t *testing.T) {
 	}
 	// targetFamilies are the only Parser families the migration can write.
 	const targetFamilies = "pdf,spreadsheet"
-	for _, ref := range append(registry.Refs(), "naive") {
+	// This historical migration handles Python-era selectable parsers; the
+	// internal code_archive graph was introduced afterwards with scoped config.
+	refs := []string{"naive"}
+	for _, meta := range registry.List().BuiltinPipelines {
+		refs = append(refs, meta.ParserID)
+	}
+	for _, ref := range refs {
 		t.Run(ref, func(t *testing.T) {
 			template, ok := registry.Get(ref)
 			if !ok {

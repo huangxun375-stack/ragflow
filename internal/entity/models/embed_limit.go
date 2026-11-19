@@ -51,6 +51,31 @@ import (
 // attempt, because counting it with the calibrated cl100k estimate is exactly what
 // lets an oversized request through.
 func (m *EmbeddingModel) Embed(ctx context.Context, req EmbedRequest, embeddingConfig *EmbeddingConfig, usage *common.ModelUsage) ([]EmbeddingData, error) {
+	return m.embedBatches(ctx, req, embeddingConfig, usage, m.embedBatch)
+}
+
+// EmbedExact preserves caller-budgeted input byte-for-byte. Unlike Embed it
+// never truncates or retries smaller text; provider input-limit errors return
+// to the caller. Batch limits, response counts and usage accounting still apply.
+func (m *EmbeddingModel) EmbedExact(ctx context.Context, req EmbedRequest, embeddingConfig *EmbeddingConfig, usage *common.ModelUsage) ([]EmbeddingData, error) {
+	return m.embedBatches(ctx, req, embeddingConfig, usage, m.embedExactBatch)
+}
+
+func (m *EmbeddingModel) embedExactBatch(ctx context.Context, req EmbedRequest, config *EmbeddingConfig, usage *common.ModelUsage) ([]EmbeddingData, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	result, err := m.ModelDriver.Embed(ctx, m.ModelName, req, m.APIConfig, config, usage)
+	if err != nil {
+		return nil, err
+	}
+	if len(result) != len(req.Texts) {
+		return nil, fmt.Errorf("embedding model: unexpected embedding count: got %d, want %d", len(result), len(req.Texts))
+	}
+	return result, nil
+}
+
+func (m *EmbeddingModel) embedBatches(ctx context.Context, req EmbedRequest, embeddingConfig *EmbeddingConfig, usage *common.ModelUsage, encode func(context.Context, EmbedRequest, *EmbeddingConfig, *common.ModelUsage) ([]EmbeddingData, error)) ([]EmbeddingData, error) {
 	if m == nil || m.ModelDriver == nil {
 		return nil, fmt.Errorf("embedding model: driver is nil")
 	}
@@ -59,7 +84,7 @@ func (m *EmbeddingModel) Embed(ctx context.Context, req EmbedRequest, embeddingC
 	}
 	batchSize := m.ResolveBatchSize()
 	if len(req.Texts) <= batchSize {
-		return m.embedBatch(ctx, req, embeddingConfig, usage)
+		return encode(ctx, req, embeddingConfig, usage)
 	}
 	out := make([]EmbeddingData, 0, len(req.Texts))
 	var inputTokens, outputTokens, totalTokens int
@@ -75,7 +100,7 @@ func (m *EmbeddingModel) Embed(ctx context.Context, req EmbedRequest, embeddingC
 			copy.InputTokens, copy.OutputTokens, copy.TotalTokens = 0, 0, 0
 			batchUsage = &copy
 		}
-		embeds, err := m.embedBatch(ctx, batch, embeddingConfig, batchUsage)
+		embeds, err := encode(ctx, batch, embeddingConfig, batchUsage)
 		if usage != nil {
 			inputTokens += batchUsage.InputTokens
 			outputTokens += batchUsage.OutputTokens

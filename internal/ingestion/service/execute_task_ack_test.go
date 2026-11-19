@@ -11,8 +11,11 @@ import (
 	"ragflow/internal/common"
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
+	"ragflow/internal/ingestion/archiveartifact"
 	taskpkg "ragflow/internal/ingestion/task"
 	"ragflow/internal/ingestion/testutil"
+	"ragflow/internal/parser/codearchive"
+	"ragflow/internal/service/archivepublication"
 )
 
 // fakeTaskHandle records Ack/Nack/InProgress calls so tests can assert the worker
@@ -75,6 +78,89 @@ func (f *fakeTaskHandle) wasSettledWithInProgress() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.settledWithInProgress
+}
+
+func TestArchiveCancellationSettlesUserStopButNacksShutdown(t *testing.T) {
+	for _, scenario := range []struct {
+		name     string
+		userStop bool
+		shutdown bool
+		cause    error
+	}{
+		{"user_stop", true, false, context.Canceled},
+		{"shutdown", false, true, context.Canceled},
+		{"lease_interrupted", false, false, context.Canceled},
+		{"stop_during_shutdown", true, true, context.Canceled},
+		{"provider_error_after_stop", true, false, errors.New("provider stopped")},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			db := testutil.SetupTestDB(t)
+			cleanup := testutil.ReplaceDBForTest(t, db)
+			defer cleanup()
+			if err := db.AutoMigrate(&entity.DocumentCodeArchive{}, &entity.ArchiveRun{}, &entity.ArchiveAttempt{}, &entity.ArchiveDatasetFence{}); err != nil {
+				t.Fatal(err)
+			}
+			_, kbID, docID, taskID := testutil.SeedTestData(t, db)
+			if err := db.Model(&entity.Document{}).Where("id = ?", docID).Updates(map[string]any{"parser_id": codearchive.ParserID, "pipeline_id": nil}).Error; err != nil {
+				t.Fatal(err)
+			}
+			var task entity.IngestionTask
+			if err := db.Take(&task, "id = ?", taskID).Error; err != nil {
+				t.Fatal(err)
+			}
+			scope := archiveartifact.Scope{DocID: docID, KBID: kbID, TaskID: taskID, RunID: *task.PipelineLogID}
+			if err := archivepublication.Queue(t.Context(), db, scope); err != nil {
+				t.Fatal(err)
+			}
+			scope, err := archivepublication.Acquire(t.Context(), db, scope, time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ingestor := newUnitIngestor("archive-cancel", 1, []string{"zip"})
+			t.Cleanup(ingestor.cancel)
+			t.Cleanup(ingestor.dispatchCancel)
+			ingestor.runDocumentTask = func(ctx context.Context, _ *entity.IngestionTask) error {
+				if scenario.userStop {
+					if err := db.Model(&entity.IngestionTask{}).Where("id = ?", taskID).Update("status", common.STOPPING).Error; err != nil {
+						return err
+					}
+				}
+				if scenario.shutdown {
+					ingestor.cancel()
+				}
+				allowed, err := archivepublication.CanCompensate(context.WithoutCancel(ctx), db, scope, scenario.cause)
+				if err != nil || !allowed {
+					return errors.Join(scenario.cause, err)
+				}
+				return scenario.cause
+			}
+			handle := &fakeTaskHandle{}
+			ctx := archiveartifact.WithScope(t.Context(), scope)
+			taskCtx := taskpkg.NewTaskContextForScheduling(ctx, &task)
+			taskCtx.Handle = handle
+			ingestor.executeTask(ctx, taskCtx)
+			current, err := dao.NewIngestionTaskDAO().GetByID(t.Context(), db, taskID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := common.RUNNING
+			if scenario.userStop {
+				want = common.STOPPED
+				if handle.acks.Load() != 1 || handle.nacks.Load() != 0 {
+					t.Fatalf("stop settlement: acks=%d nacks=%d", handle.acks.Load(), handle.nacks.Load())
+				}
+			} else if handle.acks.Load() != 0 || handle.nacks.Load() != 1 {
+				t.Fatalf("shutdown settlement: acks=%d nacks=%d", handle.acks.Load(), handle.nacks.Load())
+			}
+			if current.Status != want {
+				t.Fatalf("status=%s want=%s", current.Status, want)
+			}
+			metadata, err := archivepublication.Metadata(t.Context(), db, []string{docID})
+			if err != nil || metadata[docID].FailureReason != "" {
+				t.Fatalf("cancel recorded failure: %+v %v", metadata, err)
+			}
+		})
+	}
 }
 
 func newAckTaskCtx(ctx context.Context, taskID, docID string, handle *fakeTaskHandle) *taskpkg.TaskContext {
@@ -452,7 +538,7 @@ func TestSettleMessage_DBTruthOverridesBodyReturn(t *testing.T) {
 	// recovery where markFailed succeeded: the task is terminal (FAILED)
 	// but the body signals non-terminal.
 	body := func(ctx context.Context) bool {
-		ingestor.markFailed(ctx, taskID, "")
+		ingestor.markFailed(ctx, taskID, nil)
 		return false
 	}
 

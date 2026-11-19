@@ -228,6 +228,10 @@ COPY internal internal
 COPY cmd cmd
 COPY build.sh ./
 COPY Dockerfile ./
+COPY tools/code_archive/prepare.sh tools/code_archive/prepare.sh
+RUN if ! command -v zstd >/dev/null 2>&1; then \
+      apt-get update && apt-get install -y --no-install-recommends zstd; \
+    fi && bash tools/code_archive/prepare.sh
 
 # ONNX Runtime static archives: build.sh's _seed_from_system copies the ORT
 # static libs from the runner's pre-baked /opt/ragflow-native-libs/onnxruntime
@@ -260,6 +264,8 @@ WORKDIR /ragflow
 
 # Copy the compiled Go backend binaries (set exec bits at copy time to avoid a redundant chmod layer)
 COPY --from=go-builder --chmod=755 /ragflow/bin/ragflow_server /ragflow/bin/ragflow_server
+COPY --from=go-builder /ragflow/deps/code_archive /ragflow/deps/code_archive
+ENV RAGFLOW_CODE_ARCHIVE_GRAMMAR_CACHE=/ragflow/deps/code_archive/grammars
 
 ENV PYTHONPATH=/ragflow/
 

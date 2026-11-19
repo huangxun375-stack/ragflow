@@ -25,6 +25,7 @@ import (
 
 	agentruntime "ragflow/internal/agent/runtime"
 	"ragflow/internal/common"
+	"ragflow/internal/ingestion/archiveartifact"
 	"ragflow/internal/ingestion/pipeline"
 	servicepkg "ragflow/internal/service"
 	documentpkg "ragflow/internal/service/document"
@@ -159,6 +160,9 @@ func (s *progressSink) bindDocument(docID string) {
 }
 
 func (s *progressSink) OnComponentTotal(ctx context.Context, taskID string, total int) {
+	if scope, ok := archiveartifact.ScopeFrom(ctx); ok {
+		taskID = scope.TaskID
+	}
 	s.progress.SetTotal(total)
 	if err := s.taskSvc.UpdateComponentTotal(ctx, taskID, total); err != nil {
 		common.Error(fmt.Sprintf("progressSink: update component_total for task %s failed: %v", taskID, err), err)
@@ -166,6 +170,9 @@ func (s *progressSink) OnComponentTotal(ctx context.Context, taskID string, tota
 }
 
 func (s *progressSink) OnComponentProgress(ctx context.Context, ev pipeline.ProgressEvent) {
+	if scope, ok := archiveartifact.ScopeFrom(ctx); ok {
+		ev.TaskID = scope.TaskID
+	}
 	if err := s.taskSvc.RecordLifecycle(ctx, s.pipelineLogID, ev.TaskID, ev.Component, ev.Phase, ev.Message); err != nil {
 		common.Error(fmt.Sprintf("progressSink: record component progress for task %s failed: %v", ev.TaskID, err), err)
 	}
@@ -190,6 +197,9 @@ func (s *progressSink) OnComponentFraction(_ context.Context, component string, 
 // creating a lifecycle row, so completion percent remains based on actual
 // canvas components.
 func (s *progressSink) OnComponentMessage(ctx context.Context, taskID, _ string, component, message string) {
+	if scope, ok := archiveartifact.ScopeFrom(ctx); ok {
+		taskID = scope.TaskID
+	}
 	if message == "" {
 		return
 	}

@@ -31,6 +31,10 @@ import (
 	"ragflow/internal/engine"
 	"ragflow/internal/engine/types"
 	"ragflow/internal/entity/models"
+	"ragflow/internal/parser/codearchive"
+	"ragflow/internal/server"
+	"ragflow/internal/server/config"
+	"ragflow/internal/service/archivepublication"
 	"ragflow/internal/tokenizer"
 
 	"go.uber.org/zap"
@@ -40,11 +44,12 @@ import (
 type RetrievalService struct {
 	docEngine   engine.DocEngine
 	documentDAO *dao.DocumentDAO
+	deployment  *config.Config
 }
 
 // NewRetrievalService creates a new RetrievalService with the given doc engine
 func NewRetrievalService(docEngine engine.DocEngine, documentDAO *dao.DocumentDAO) *RetrievalService {
-	return &RetrievalService{docEngine: docEngine, documentDAO: documentDAO}
+	return &RetrievalService{docEngine: docEngine, documentDAO: documentDAO, deployment: server.GetConfig()}
 }
 
 // RetrievalRequest request for retrieval search
@@ -226,6 +231,19 @@ func (s *RetrievalService) Retrieval(ctx context.Context, req *RetrievalRequest)
 		return &RetrievalResult{Chunks: []map[string]interface{}{}, DocAggs: []map[string]interface{}{}, Total: 0}, nil
 	}
 
+	// Infinity can alias all three score slices. Never mutate the components or
+	// use the ordering prior as an eligibility threshold.
+	thresholdScores := sim
+	sim = slices.Clone(sim)
+	weight := s.deployment.GetCodeArchiveRetrievalConfig().TestSourceWeight
+	if weight < 1 && !hasTestIntent(req.Question) {
+		for i, id := range searchResult.IDs {
+			if codearchive.IsTestSource(firstStringValue(searchResult.Field[id]["source_path_kwd"])) {
+				sim[i] *= weight
+			}
+		}
+	}
+
 	// Sort indices (positions into search results) by score descending
 	// After sorting by score descending, we process chunks in relevance order
 	type idxScore struct {
@@ -260,7 +278,7 @@ func (s *RetrievalService) Retrieval(ctx context.Context, req *RetrievalRequest)
 	// Get valid indices where score >= postThreshold
 	validIdx := make([]int, 0)
 	for _, is := range idxScores {
-		if is.score >= postThreshold {
+		if thresholdScores[is.idx] >= postThreshold {
 			validIdx = append(validIdx, is.idx)
 		}
 	}
@@ -308,6 +326,7 @@ func (s *RetrievalService) Retrieval(ctx context.Context, req *RetrievalRequest)
 		}
 
 		resultChunk := make(map[string]interface{})
+		archivepublication.CopySourceFields(resultChunk, chunk)
 		resultChunk["chunk_id"] = chunkID
 		if v, ok := chunk["content_ltks"]; ok {
 			resultChunk["content_ltks"] = v
@@ -472,6 +491,9 @@ func (s *RetrievalService) Retrieval(ctx context.Context, req *RetrievalRequest)
 		docAggs = []map[string]interface{}{}
 	}
 
+	if err := archivepublication.CheckRows(ctx, dao.DB, req.KbIDs, filteredChunks); err != nil {
+		return nil, err
+	}
 	return &RetrievalResult{
 		Chunks:  filteredChunks,
 		DocAggs: docAggs,
@@ -729,6 +751,15 @@ func (s *RetrievalService) Search(ctx context.Context, req *RetrievalSearchReque
 	if _, ok := filters["available_int"]; !ok {
 		filters["available_int"] = 1
 	}
+	var visibilityErr error
+	if len(req.KbIDs) == 0 && len(req.DocIDs) == 0 {
+		filters, visibilityErr = archivepublication.FilterForTenants(ctx, dao.DB, req.TenantIDs, filters)
+	} else {
+		filters, visibilityErr = archivepublication.Filter(ctx, dao.DB, req.KbIDs, req.DocIDs, filters)
+	}
+	if visibilityErr != nil {
+		return nil, visibilityErr
+	}
 	pg := max(req.Page-1, 0)
 	knnTopK := req.KNNTopK
 	if knnTopK <= 0 {
@@ -768,6 +799,7 @@ func (s *RetrievalService) Search(ctx context.Context, req *RetrievalSearchReque
 	}
 
 	kwds := make(map[string]struct{})
+	src = append(src, archivepublication.ReadSourceFields()...)
 
 	// Build base engine request with common fields.
 	searchRequest := &types.SearchRequest{
@@ -931,6 +963,12 @@ func (s *RetrievalService) Search(ctx context.Context, req *RetrievalSearchReque
 	}
 
 	searchResult := engineResult
+	if searchResult == nil {
+		return nil, fmt.Errorf("search returned no result")
+	}
+	if err := archivepublication.CheckRows(ctx, dao.DB, req.KbIDs, searchResult.Chunks); err != nil {
+		return nil, err
+	}
 	// The window the engine was asked for vs what it returned, together with what
 	// it was asked FOR: a shortfall is indistinguishable from a narrower query
 	// without both, and it is what a caller sees as a thin candidate pool (the ES
@@ -972,6 +1010,20 @@ func (s *RetrievalService) Search(ctx context.Context, req *RetrievalSearchReque
 	}
 
 	fieldMap := s.docEngine.GetFields(searchResult.Chunks, src)
+	for _, row := range searchResult.Chunks {
+		rowIDs := s.docEngine.GetChunkIDs([]map[string]any{row})
+		if len(rowIDs) != 1 {
+			continue
+		}
+		if fieldMap[rowIDs[0]] == nil {
+			continue
+		}
+		for _, key := range archivepublication.SourceFields {
+			if value, ok := row[key]; ok {
+				fieldMap[rowIDs[0]][key] = value
+			}
+		}
+	}
 	common.Info("GetFields result", zap.Int("count", len(fieldMap)), zap.Strings("keys", func() []string {
 		keys := make([]string, 0, len(fieldMap))
 		for k := range fieldMap {
@@ -1079,6 +1131,9 @@ func RetrievalByChildren(chunks []map[string]interface{}, tenantIDs []string, do
 	if len(chunks) == 0 || len(indexNames) == 0 {
 		return chunks
 	}
+	if err := archivepublication.CheckRows(ctx, dao.DB, nil, chunks); err != nil {
+		return nil
+	}
 
 	// Group child chunks by parent identity and document. The document scope is
 	// required both for new parent IDs and for safe fallback when reading legacy
@@ -1095,6 +1150,13 @@ func RetrievalByChildren(chunks []map[string]interface{}, tenantIDs []string, do
 	remainingChunks := make([]map[string]interface{}, 0, len(chunks))
 
 	for _, ck := range chunks {
+		if firstStringValue(ck["archive_run_kwd"]) != "" || firstStringValue(ck["archive_run_id"]) != "" {
+			if err := archivepublication.CheckRows(ctx, dao.DB, nil, []map[string]any{ck}); err != nil {
+				return nil
+			}
+			remainingChunks = append(remainingChunks, ck)
+			continue
+		}
 		momID, ok := ck["mom_id"].(string)
 		if !ok || momID == "" {
 			remainingChunks = append(remainingChunks, ck)
@@ -1112,22 +1174,23 @@ func RetrievalByChildren(chunks []map[string]interface{}, tenantIDs []string, do
 
 	if len(momChunks) == 0 {
 		common.Info("RetrievalByChildren finished", zap.Int("momChunks", len(momChunks)), zap.Int("resultChunks", len(chunks)))
-		return chunks
+		return remainingChunks
 	}
 
 	// Fetch parent chunks and aggregate
 	vectorSize := 1024
 	for key, childList := range momChunks {
 		momID := key.momID
+		filter, visibilityErr := archivepublication.Filter(ctx, dao.DB, []string{key.kbID}, []string{key.docID}, map[string]any{"id": momID, "doc_id": key.docID})
+		if visibilityErr != nil {
+			return nil
+		}
 		parentResult, err := docEngine.Search(ctx, &types.SearchRequest{
 			IndexNames:         indexNames,
 			KbIDs:              []string{key.kbID},
 			Limit:              1,
 			IncludeUnavailable: true,
-			Filter: map[string]interface{}{
-				"id":     momID,
-				"doc_id": key.docID,
-			},
+			Filter:             filter,
 		})
 		if err != nil {
 			common.Warn("Failed to get parent chunk", zap.String("momID", momID), zap.Error(err))
@@ -1230,6 +1293,9 @@ func RetrievalByChildren(chunks []map[string]interface{}, tenantIDs []string, do
 	}
 
 	common.Info("RetrievalByChildren finished", zap.Int("momChunks", len(momChunks)), zap.Int("resultChunks", len(remainingChunks)))
+	if err := archivepublication.CheckRows(ctx, dao.DB, nil, remainingChunks); err != nil {
+		return nil
+	}
 	return remainingChunks
 }
 
@@ -1264,6 +1330,17 @@ func (s *RetrievalService) PruneDeletedChunks(ctx context.Context, result *Retri
 	docs, err := s.documentDAO.GetByIDs(ctx, dao.DB, uniqueDocIDs)
 	if err != nil {
 		return nil, fmt.Errorf("GetByIDs failed: %w", err)
+	}
+	// Dataset compilation rows use synthetic dataset IDs rather than source
+	// documents, so they have no archive publication to look up.
+	sourceRows := make([]map[string]any, 0, len(result.Chunks))
+	for _, row := range result.Chunks {
+		if !isDatasetCompilationChunk(row) {
+			sourceRows = append(sourceRows, row)
+		}
+	}
+	if err := archivepublication.CheckRows(ctx, dao.DB, nil, sourceRows); err != nil {
+		return nil, err
 	}
 
 	existingDocIDs := make(map[string]struct{}, len(docs))
@@ -1376,14 +1453,26 @@ func (s *RetrievalService) FetchChunkVectors(ctx context.Context, chunkIDs []str
 		KbIDs:        kbIDs,
 		Limit:        len(chunkIDs),
 		Offset:       0,
-		SelectFields: []string{"id", vecField},
+		SelectFields: append([]string{"id", "doc_id", vecField}, archivepublication.ReadSourceFields()...),
 		Filter:       map[string]interface{}{"id": chunkIDs},
 		MatchExprs:   []interface{}{},
+	}
+	var filterErr error
+	if len(kbIDs) == 0 {
+		req.Filter, filterErr = archivepublication.FilterForTenants(ctx, dao.DB, tenantIDs, req.Filter)
+	} else {
+		req.Filter, filterErr = archivepublication.Filter(ctx, dao.DB, kbIDs, nil, req.Filter)
+	}
+	if filterErr != nil {
+		return nil, filterErr
 	}
 
 	result, err := s.docEngine.Search(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("FetchChunkVectors: engine search failed: %w", err)
+	}
+	if err := archivepublication.CheckRows(ctx, dao.DB, kbIDs, result.Chunks); err != nil {
+		return nil, err
 	}
 
 	out := make(map[string][]float64, len(chunkIDs))

@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"ragflow/internal/common"
+	"ragflow/internal/parser/codearchive"
 	"ragflow/internal/server/config"
 	"strings"
 	"time"
@@ -120,6 +121,9 @@ func Init(configPath string) error {
 	if err != nil {
 		return fmt.Errorf("parse ingestor config error: %w", err)
 	}
+	if err := globalConfig.ParseCodeArchiveConfig(v); err != nil {
+		return fmt.Errorf("parse code archive config error: %w", err)
+	}
 
 	err = globalConfig.ParseSyncerConfig(v)
 	if err != nil {
@@ -173,6 +177,12 @@ func Init(configPath string) error {
 func GetConfig() *config.Config {
 	return globalConfig
 }
+
+func GetCodeArchivePolicy() codearchive.Policy {
+	return globalConfig.GetCodeArchivePolicy()
+}
+
+func SupportsCodeArchive() bool { return globalConfig.SupportsCodeArchive() }
 
 // MCPAllowPrivateHosts reports whether self-hosted MCP servers on private
 // networks are permitted (ALLOW_ANY_HOST). It is nil-safe:

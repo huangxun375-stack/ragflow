@@ -255,6 +255,7 @@ func TestRetrievalRejectsWindowsAboveTheCapBeforeSearch(t *testing.T) {
 }
 
 func TestRetrievalAcceptsWindowsAtTheCap(t *testing.T) {
+	newRetrievalTestDB(t)
 	oldQueryBuilder := globalQueryBuilder
 	globalQueryBuilder = NewQueryBuilder()
 	defer func() { globalQueryBuilder = oldQueryBuilder }()
@@ -937,6 +938,7 @@ func (e *parentChunkScopeEngine) Search(_ context.Context, req *types.SearchRequ
 }
 
 func TestRetrievalByChildrenScopesParentLookupToChildDocument(t *testing.T) {
+	newRetrievalTestDB(t)
 	engine := &parentChunkScopeEngine{}
 	child := map[string]interface{}{
 		"chunk_id":            "child-a",
@@ -987,6 +989,7 @@ func TestRetrievalByChildrenScopesParentLookupToChildDocument(t *testing.T) {
 // parent-child write never turns a relevant child hit into an empty result.
 // Removing the fallback is a retrieval data-loss bug.
 func TestRetrievalByChildrenKeepsChildWhenParentIsMissing(t *testing.T) {
+	newRetrievalTestDB(t)
 	child := map[string]interface{}{
 		"chunk_id":            "child-1",
 		"mom_id":              "parent-1",
@@ -1127,6 +1130,7 @@ func (e *retryCaptureEngine) GetHighlight([]map[string]interface{}, []string, st
 }
 
 func TestSearchDenseFallbackContract(t *testing.T) {
+	newRetrievalTestDB(t)
 	if GetQueryBuilder() == nil {
 		globalQueryBuilder = NewQueryBuilder()
 	}
@@ -1179,6 +1183,7 @@ func TestSearchDenseFallbackContract(t *testing.T) {
 }
 
 func TestSearchWithoutLexicalExpressionRetries(t *testing.T) {
+	newRetrievalTestDB(t)
 	if GetQueryBuilder() == nil {
 		globalQueryBuilder = NewQueryBuilder()
 	}
@@ -1202,6 +1207,7 @@ func TestSearchWithoutLexicalExpressionRetries(t *testing.T) {
 }
 
 func TestRetrievalDisablesDenseFallback(t *testing.T) {
+	newRetrievalTestDB(t)
 	if GetQueryBuilder() == nil {
 		globalQueryBuilder = NewQueryBuilder()
 	}
@@ -1228,6 +1234,7 @@ func TestRetrievalDisablesDenseFallback(t *testing.T) {
 }
 
 func TestSearchPassesVectorSimilarityWeightToFusionExpr(t *testing.T) {
+	newRetrievalTestDB(t)
 	if GetQueryBuilder() == nil {
 		globalQueryBuilder = NewQueryBuilder()
 	}
@@ -1245,6 +1252,7 @@ func TestSearchPassesVectorSimilarityWeightToFusionExpr(t *testing.T) {
 }
 
 func TestRetrievalPassesVectorSimilarityWeightToSearch(t *testing.T) {
+	newRetrievalTestDB(t)
 	if GetQueryBuilder() == nil {
 		globalQueryBuilder = NewQueryBuilder()
 	}
@@ -1298,6 +1306,7 @@ func TestBuildRetrievalFusionExprMatchesPythonEngineWeights(t *testing.T) {
 }
 
 func TestSearchKeepsPythonFusionWeightForElasticsearch(t *testing.T) {
+	newRetrievalTestDB(t)
 	if GetQueryBuilder() == nil {
 		globalQueryBuilder = NewQueryBuilder()
 	}
@@ -1398,6 +1407,7 @@ func TestRetrievalSearchesEachTenantIndexOnce(t *testing.T) {
 // every MATCH expression. A query with none cannot carry a score on Infinity
 // (3013), which is what collapsed every similarity to 0.0.
 func TestSearchDocumentScopeRetriesWithRelaxedHybrid(t *testing.T) {
+	newRetrievalTestDB(t)
 	oldQueryBuilder := globalQueryBuilder
 	if GetQueryBuilder() == nil {
 		globalQueryBuilder = NewQueryBuilder()
@@ -1435,6 +1445,7 @@ func TestSearchDocumentScopeRetriesWithRelaxedHybrid(t *testing.T) {
 // indistinguishable from a real failure. Callers that want a document's chunks
 // ask ChunkService.List.
 func TestSearchDocumentScopeNeverResortsToFilterOnly(t *testing.T) {
+	newRetrievalTestDB(t)
 	oldQueryBuilder := globalQueryBuilder
 	if GetQueryBuilder() == nil {
 		globalQueryBuilder = NewQueryBuilder()
@@ -1480,6 +1491,7 @@ func TestSearchDocumentScopeNeverResortsToFilterOnly(t *testing.T) {
 // human-facing retrieval path, so it needs its own guard rather than relying on
 // the agentic tests staying green.
 func TestSearchDefaultsDenseFallbackOn(t *testing.T) {
+	newRetrievalTestDB(t)
 	oldQueryBuilder := globalQueryBuilder
 	if GetQueryBuilder() == nil {
 		globalQueryBuilder = NewQueryBuilder()

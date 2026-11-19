@@ -32,6 +32,7 @@ import (
 // engine Search whose MatchExprs contain exactly one MatchTextExpr (no dense
 // vector, no fusion) with default top_n and the compile/graph filters.
 func TestBm25Adapter_TextOnlyMatchExpr(t *testing.T) {
+	setupArchiveVisibilityTestDB(t)
 	fe := &grepFakeEngine{}
 	adapter := NewBm25Adapter(fe)
 
@@ -69,11 +70,16 @@ func TestBm25Adapter_TextOnlyMatchExpr(t *testing.T) {
 	if _, ok := req.Filter["must_not"]; !ok {
 		t.Error("Filter missing must_not compile_kwd exclusion")
 	}
+	visibility, ok := req.Filter["and"].([]map[string]any)
+	if !ok || len(visibility) != 1 || visibility[0]["must_not"].(map[string]any)["exists"] != "archive_run_kwd" {
+		t.Fatalf("BM25 query omitted orphan archive exclusion: %#v", req.Filter)
+	}
 }
 
 // TestBm25Adapter_MergesDedupesSkipsGraph asserts cross-query dedup by chunk
 // id, graph-payload skipping, and _score propagation into RetrievalChunk.Score.
 func TestBm25Adapter_MergesDedupesSkipsGraph(t *testing.T) {
+	setupArchiveVisibilityTestDB(t)
 	base := &grepFakeEngine{
 		searchChunks: []map[string]interface{}{
 			{"id": "c1", "content_with_weight": "plain prose", "doc_id": "d1", "kb_id": "kb1", "_score": 7.5},
@@ -239,6 +245,7 @@ func (f *fakeQueryTokenizer) Question(txt string, _ string, _ float64, language 
 // TOKENIZED match expression (same word forms as the ingestion-side index
 // tokens) and the tokenizer's own TopN is overridden by the caller's.
 func TestBm25Adapter_TokenizedMatchExpr(t *testing.T) {
+	setupArchiveVisibilityTestDB(t)
 	fe := &grepFakeEngine{}
 	adapter := NewBm25Adapter(fe)
 	adapter.SetQueryBuilder(&fakeQueryTokenizer{})
@@ -266,6 +273,7 @@ func TestBm25Adapter_TokenizedMatchExpr(t *testing.T) {
 // the language the searched datasets were indexed with, so a Slovak dataset's
 // folded index tokens are matched by a folded query.
 func TestBm25Adapter_TokenizesWithDatasetLanguage(t *testing.T) {
+	setupArchiveVisibilityTestDB(t)
 	orig := resolveDatasetsLanguage
 	t.Cleanup(func() { resolveDatasetsLanguage = orig })
 	var gotIDs []string

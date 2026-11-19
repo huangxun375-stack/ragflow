@@ -578,6 +578,12 @@ func (a *NLPRetrievalAdapter) resolveRerankModel(
 // can't break the whole result list.
 func translateChunk(raw map[string]any) RetrievalChunk {
 	return RetrievalChunk{
+		SourcePath:       FirstStringFromMap(raw, "source_path", "source_path_kwd"),
+		StartLine:        IntFromMap(raw, "start_line"),
+		EndLine:          IntFromMap(raw, "end_line"),
+		CodeLanguage:     FirstStringFromMap(raw, "code_lang", "code_lang_kwd"),
+		ArchiveRunID:     FirstStringFromMap(raw, "archive_run_id", "archive_run_kwd"),
+		ArchiveAttemptID: StringFromMap(raw, "archive_attempt_kwd"),
 		ID:               StringFromMap(raw, "chunk_id"),
 		Content:          contentFromMap(raw),
 		DocumentID:       StringFromMap(raw, "doc_id"),

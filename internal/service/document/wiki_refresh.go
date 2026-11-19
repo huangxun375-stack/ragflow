@@ -22,9 +22,11 @@ import (
 	"time"
 
 	"ragflow/internal/common"
+	"ragflow/internal/dao"
 	enginetypes "ragflow/internal/engine/types"
 	kccommon "ragflow/internal/ingestion/component/knowledge_compiler/common"
 	"ragflow/internal/ingestion/knowledge_compile"
+	"ragflow/internal/service/archivepublication"
 
 	"go.uber.org/zap"
 )
@@ -41,6 +43,16 @@ func (s *DocumentService) updateDocumentChunkAvailability(ctx context.Context, t
 		return fmt.Errorf("document engine not initialized")
 	}
 	indexName := fmt.Sprintf("ragflow_%s", tenantID)
+	generations, err := archivepublication.VisibleGenerations(ctx, dao.DB, []string{datasetID}, []string{documentID})
+	if err != nil {
+		return err
+	}
+	if generation, isArchive := generations[documentID]; isArchive {
+		if generation.RunID == "" || generation.AttemptID == "" {
+			return nil
+		}
+		return s.docEngine.UpdateChunks(ctx, map[string]any{"doc_id": documentID, "archive_run_kwd": generation.RunID, "archive_attempt_kwd": generation.AttemptID}, map[string]any{"available_int": available}, indexName, datasetID)
+	}
 	ids, err := s.loadAvailabilityToggleChunkIDs(ctx, indexName, datasetID, documentID)
 	if err != nil {
 		return err

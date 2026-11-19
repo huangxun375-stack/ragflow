@@ -38,6 +38,7 @@ import (
 	"ragflow/internal/dao"
 	"ragflow/internal/entity/models"
 	componentpkg "ragflow/internal/ingestion/component"
+	"ragflow/internal/parser/codearchive"
 	"ragflow/internal/permission"
 	"ragflow/internal/service"
 	"ragflow/internal/tokenizer"
@@ -46,7 +47,8 @@ import (
 )
 
 type embedder struct {
-	model *models.EmbeddingModel
+	model         *models.EmbeddingModel
+	strictArchive bool
 
 	// limiter is resolved once per embedder (one embedder is built per tokenizer
 	// invocation, i.e. per document) and binds the model's tokenizer, the
@@ -102,7 +104,13 @@ func (e *embedder) limiter() tokenizer.Limiter {
 				"embedding tokenizer %q is declared for %s but its asset is unavailable (check that deps/huggingface.co is present; run `uv run deps/download_deps.py`): refusing to count with the calibrated estimate",
 				id, e.quotaKey())
 		}
-		e.limiterVal = tokenizer.LimiterFor(id, string(e.quotaKey()), tokenizer.DefaultCalibration())
+		calibration := tokenizer.DefaultCalibration()
+		if e.strictArchive {
+			// Archive retries must use the same counting bound regardless of
+			// traffic observed by this process or credential rotation.
+			calibration = tokenizer.NewCalibration(tokenizer.DefaultUncountedRatioUpper)
+		}
+		e.limiterVal = tokenizer.LimiterFor(id, string(e.quotaKey()), calibration)
 	})
 	return e.limiterVal
 }
@@ -116,8 +124,14 @@ func (e *embedder) Trim(text string) (string, int) {
 	return limiter.Trim(text, e.ResolveMaxTokens())
 }
 
-// Encode embeds texts, keeping three properties the previous implementation did
-// not have:
+// FitsInput has exactly the same acceptance rule as Trim(text) == text,
+// including the model margin and calibration, without building discarded text.
+func (e *embedder) FitsInput(text string) bool {
+	return e.limiter().Fits(text, e.ResolveMaxTokens())
+}
+
+// Encode preserves archive texts exactly, isolating provider limit rejections
+// without truncation. Ordinary documents retain the shrink-and-calibrate policy:
 //
 //  1. It never lets one oversized input fail the whole document: an over-limit
 //     rejection shrinks the budget and retries, then isolates the offending
@@ -139,6 +153,32 @@ func (e *embedder) Encode(ctx context.Context, texts []string) ([]componentpkg.E
 	}
 	maxTokens := e.ResolveMaxTokens()
 	cal, calKey := limiter.Calibration()
+	if e.strictArchive {
+		limit := limiter.Limit(maxTokens)
+		own := make([]int, len(texts))
+		for i, text := range texts {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			own[i] = limiter.Counter().Count(text)
+			if own[i] > limit {
+				return nil, &codearchive.Error{Code: "ZIP_TOKEN_LIMIT_EXCEEDED"}
+			}
+		}
+		// Keep each isolation root within the provider batch cap so EmbedExact
+		// cannot hide successful sub-batches behind a later rejection.
+		out := make([]componentpkg.EmbeddingResult, 0, len(texts))
+		batchSize := e.BatchSize()
+		for start := 0; start < len(texts); start += batchSize {
+			end := min(start+batchSize, len(texts))
+			batch, err := e.encodeArchiveBatch(ctx, texts[start:end], own[start:end])
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, batch...)
+		}
+		return out, nil
+	}
 
 	var lastErr error
 	for _, limit := range overLimitLadder(limiter.Limit(maxTokens)) {
@@ -177,6 +217,62 @@ func (e *embedder) Encode(ctx context.Context, texts []string) ([]componentpkg.E
 		return nil, lastErr
 	}
 	return nil, err
+}
+
+// encodeArchiveBatch receives nonempty, prechecked inputs within BatchSize.
+// It visits at most 2*n-1 binary-tree nodes plus one retry per singleton;
+// transient transport/rate-limit retries remain bounded by embedWithRetry.
+func (e *embedder) encodeArchiveBatch(ctx context.Context, texts []string, own []int) ([]componentpkg.EmbeddingResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	embeds, usage, err := e.embedWithRetry(ctx, texts)
+	if cerr := ctx.Err(); cerr != nil {
+		return nil, cerr
+	}
+	if err == nil {
+		return distributeTokenCount(embeds, usage, own), nil
+	}
+	if !isOverLimitErr(err) {
+		return nil, err
+	}
+	if len(texts) > 1 {
+		mid := len(texts) / 2
+		left, err := e.encodeArchiveBatch(ctx, texts[:mid], own[:mid])
+		if err != nil {
+			return nil, err
+		}
+		right, err := e.encodeArchiveBatch(ctx, texts[mid:], own[mid:])
+		if err != nil {
+			return nil, err
+		}
+		return append(left, right...), nil
+	}
+
+	// A locally valid singleton may still receive a transient provider 4xx.
+	// Back off locally, without putting unrelated workers into a 429 cooldown.
+	timer := time.NewTimer(archiveLimitRetryDelay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	embeds, usage, err = e.embedWithRetry(ctx, texts)
+	if cerr := ctx.Err(); cerr != nil {
+		return nil, cerr
+	}
+	if err == nil {
+		return distributeTokenCount(embeds, usage, own), nil
+	}
+	if !isOverLimitErr(err) {
+		return nil, err
+	}
+	return nil, fmt.Errorf("%w: provider rejected unchanged archive input after retry: %w",
+		&codearchive.Error{Code: "ZIP_TOKEN_LIMIT_EXCEEDED"}, err)
 }
 
 // overLimitLadder is the sequence of budgets tried, as fractions of the first
@@ -251,9 +347,16 @@ func (e *embedder) embedWithRetry(ctx context.Context, texts []string) ([]models
 			return nil, 0, cerr
 		}
 		usage := &common.ModelUsage{}
-		embeds, err = e.model.Embed(ctx, req, config, usage)
+		if e.strictArchive {
+			embeds, err = e.model.EmbedExact(ctx, req, config, usage)
+		} else {
+			embeds, err = e.model.Embed(ctx, req, config, usage)
+		}
 		if err == nil {
 			return embeds, usage.InputTokens, nil
+		}
+		if e.strictArchive && isOverLimitErr(err) {
+			return nil, 0, err
 		}
 		if !isRetryableErr(err) {
 			return nil, 0, err
@@ -395,6 +498,9 @@ var (
 	encodeBackoffMax    = 120 * time.Second
 	encodeBackoffJitter = 0.2
 )
+
+// Kept separate from the shared rate-limit schedule and shortened by tests.
+var archiveLimitRetryDelay = 250 * time.Millisecond
 
 // providerQuotaKey identifies the thing a TPM quota actually belongs to: one
 // provider instance (endpoint + credentials + model). See quotaKey.

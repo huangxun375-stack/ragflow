@@ -2198,7 +2198,7 @@ func (s *ChatSessionService) chunksFormat(reference map[string]interface{}) []ma
 	}
 	out := make([]map[string]interface{}, 0, len(raw))
 	for _, chunk := range raw {
-		out = append(out, map[string]interface{}{
+		formatted := map[string]interface{}{
 			"id":                getValue(chunk, "chunk_id", "id"),
 			"content":           getValue(chunk, "content", "content_with_weight"),
 			"document_id":       getValue(chunk, "doc_id", "document_id"),
@@ -2213,7 +2213,9 @@ func (s *ChatSessionService) chunksFormat(reference map[string]interface{}) []ma
 			"row_id":            chunk["row_id"],
 			"doc_type":          getValue(chunk, "doc_type_kwd", "doc_type"),
 			"document_metadata": chunk["document_metadata"],
-		})
+		}
+		copyArchiveCitationFields(formatted, chunk)
+		out = append(out, formatted)
 	}
 	return out
 }

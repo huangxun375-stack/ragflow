@@ -15,6 +15,7 @@ import (
 	"ragflow/internal/permission"
 	permissionresponse "ragflow/internal/permission/response"
 	"ragflow/internal/service"
+	"ragflow/internal/service/archivepublication"
 	"ragflow/internal/storage"
 
 	"go.uber.org/zap"
@@ -480,6 +481,9 @@ func (d *DatasetService) deleteDataset(ctx context.Context, kb *entity.Knowledge
 		return fmt.Errorf("storage not initialized")
 	}
 	datasetNameID := datasetNameAndID(kb)
+	if err := archivepublication.RevokeDataset(ctx, dao.DB, kb.ID); err != nil {
+		return fmt.Errorf("fence dataset archive attempts: %w", err)
+	}
 
 	// Collect document IDs first so engine cleanup can run before the
 	// transaction (engine ops are not transactional).
@@ -524,7 +528,7 @@ func (d *DatasetService) deleteDataset(ctx context.Context, kb *entity.Knowledge
 		d.deleteDatasetEngineData(ctx, kb, docIDs)
 	}
 
-	if err := dao.DB.Transaction(func(tx *gorm.DB) error {
+	if err := archivepublication.WithDatasetCleanup(ctx, dao.DB, kb.ID, func(tx *gorm.DB) error {
 		// Delete index tasks referencing this KB.
 		if taskIDs := datasetIndexTaskIDs(kb); len(taskIDs) > 0 {
 			if err := tx.Where("id IN ?", taskIDs).Delete(&entity.Task{}).Error; err != nil {
@@ -553,6 +557,9 @@ func (d *DatasetService) deleteDataset(ctx context.Context, kb *entity.Knowledge
 			if err := tx.Where("id IN ?", docIDs).Delete(&entity.Document{}).Error; err != nil {
 				return fmt.Errorf("delete dataset error for %s", kb.ID)
 			}
+		}
+		if err := archivepublication.DeleteDataset(ctx, tx, kb.ID); err != nil {
+			return err
 		}
 
 		// Delete the KB folder file record.

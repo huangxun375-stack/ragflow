@@ -95,6 +95,7 @@ import (
 	"ragflow/internal/ingestion/chunkcache"
 	"ragflow/internal/ingestion/component/globals"
 	"ragflow/internal/ingestion/component/schema"
+	"ragflow/internal/parser/codearchive"
 	"ragflow/internal/tokenizer"
 )
 
@@ -467,6 +468,12 @@ func (c *TokenizerComponent) embedChunks(ctx context.Context, tenantID, kbID, na
 	if resolver == nil {
 		resolver = DefaultEmbedderResolver
 	}
+	archive, archiveInput := codeArchiveRuntime(ctx)
+	if archiveInput {
+		resolver = func(context.Context, string, string) (Embedder, string, error) {
+			return archive.Embedder, archive.ModelID, nil
+		}
+	}
 	if resolver == nil {
 		return nil, 0, fmt.Errorf("tokenizer: embedding requested but no embedder resolver configured")
 	}
@@ -476,6 +483,26 @@ func (c *TokenizerComponent) embedChunks(ctx context.Context, tenantID, kbID, na
 	}
 	if embedder == nil {
 		return nil, 0, fmt.Errorf("tokenizer: embedding requested but encoder resolution returned nil")
+	}
+
+	// Only trusted runtime metadata can extend the cache identity. Keep the
+	// provider reference intact; a reference alone cannot identify ZIP vectors.
+	var cacheFingerprint string
+	if archiveInput && archive.Snapshot != nil && archive.Snapshot.Embedding.Reference == embdID {
+		cacheFingerprint = archive.Snapshot.Embedding.Fingerprint
+	}
+	cacheKey := func(chunk schema.ChunkDoc, text string) string {
+		chunkID, ok := chunk.GetExtraString("id")
+		if !ok {
+			return ""
+		}
+		if archiveInput || chunk.SourcePathKwd != "" {
+			if strings.TrimSpace(cacheFingerprint) == "" {
+				return ""
+			}
+			return chunkcache.Key("emb", embdID, chunkID, text, cacheFingerprint)
+		}
+		return chunkcache.Key("emb", embdID, chunkID, text)
 	}
 
 	// store may be nil (no redis configured / unit test); cache lookups then
@@ -508,12 +535,17 @@ func (c *TokenizerComponent) embedChunks(ctx context.Context, tenantID, kbID, na
 	// nothing after trimming, which means the embedder's trimmer returned no
 	// text for non-empty input.
 	emptyAfterTrim := 0
+	codeInput := false
 	for i, ck := range chunks {
+		codeInput = codeInput || ck.SourcePathKwd != ""
 		raw := concatFields(ck, c.param.Fields)
 		// Python parity (tokenizer.py:86-89): strip table-structure tags
 		// before the emptiness check and embed the stripped text, so an
 		// empty-table chunk contributes nothing to the batch.
 		txt := cleanEmbedText(raw)
+		if ck.SourcePathKwd != "" {
+			txt = raw
+		}
 		if txt == "" {
 			// Two different causes reach this branch and only one is a defect:
 			// no configured field produced text at all (misconfiguration),
@@ -526,16 +558,14 @@ func (c *TokenizerComponent) embedChunks(ctx context.Context, tenantID, kbID, na
 			}
 			continue
 		}
-		// Per-chunk embedding cache: identical (dataset embd_id, chunk, embedded
-		// text) triples reuse the previous content vector, skipping the embed
-		// round-trip on resume. The key includes the text that is actually
-		// embedded — after field selection (c.param.Fields) and truncation — not
-		// just the chunk id. A tokenizer-config or model change alters the
-		// embedded input; reusing the prior vector for that case would serve a
-		// stale embedding for up to the cache TTL. embdID must be non-empty or
-		// every model would collapse onto one key and served vectors could come
-		// from a different model.
+		// The cache includes the text actually embedded after field selection
+		// and truncation. ZIP vectors also require the frozen model fingerprint:
+		// a provider can change without changing its reference or input text.
+		// Missing model or chunk identities bypass the cache.
 		trunc := trimForEmbedding(embedder, txt)
+		if ck.SourcePathKwd != "" && trunc != txt {
+			return nil, 0, &codearchive.Error{Code: "ZIP_TOKEN_LIMIT_EXCEEDED"}
+		}
 		// A provider rejects the WHOLE batch when any input carries no content
 		// token — vLLM answers 400 "Input validation error: `inputs` cannot be
 		// empty" — so an empty input must never reach the batch. The
@@ -549,8 +579,8 @@ func (c *TokenizerComponent) embedChunks(ctx context.Context, tenantID, kbID, na
 			emptyAfterTrim++
 			trunc = txt
 		}
-		if chunkID, ok := ck.GetExtraString("id"); ok && embdID != "" && store != nil {
-			if cached, hit := chunkcache.Get(ctx, store, chunkcache.Key("emb", embdID, chunkID, trunc)); hit {
+		if store != nil {
+			if cached, hit := chunkcache.Get(ctx, store, cacheKey(ck, trunc)); hit {
 				var vec []float64
 				if err := json.Unmarshal([]byte(cached), &vec); err == nil && len(vec) > 0 {
 					resolved[i] = &resolvedVec{content: vec, isHit: true, trunc: trunc}
@@ -600,7 +630,7 @@ func (c *TokenizerComponent) embedChunks(ctx context.Context, tenantID, kbID, na
 	// the DSL.
 	if trimmedName == "" {
 		common.Warn("Tokenizer: empty name provided from upstream, embedding will skip title weighting")
-	} else {
+	} else if !codeInput || c.param.FilenameEmbdWeight != 0 {
 		// Encode the raw name (no TrimSpace) to mirror Python
 		// tokenizer.py:95 which passes name verbatim to embedding. The
 		// empty-name guard above still uses TrimSpace, matching Python's
@@ -675,10 +705,10 @@ func (c *TokenizerComponent) embedChunks(ctx context.Context, tenantID, kbID, na
 		// The embedded text (trunc) is part of the key so a config/model change
 		// that alters the embedded input forces a fresh embed rather than serving
 		// a stale vector.
-		if !re.isHit {
-			if chunkID, ok := chunks[i].GetExtraString("id"); ok && embdID != "" && store != nil {
+		if !re.isHit && store != nil {
+			if key := cacheKey(chunks[i], re.trunc); key != "" {
 				if b, merr := json.Marshal(re.content); merr == nil {
-					chunkcache.Set(ctx, store, chunkcache.Key("emb", embdID, chunkID, re.trunc), string(b))
+					chunkcache.Set(ctx, store, key, string(b))
 				}
 			}
 		}
@@ -807,6 +837,14 @@ func cloneChunkDocs(in []schema.ChunkDoc) []schema.ChunkDoc {
 
 func cloneTokenizerChunkDoc(in schema.ChunkDoc) schema.ChunkDoc {
 	out := in
+	if in.StartLineInt != nil {
+		v := *in.StartLineInt
+		out.StartLineInt = &v
+	}
+	if in.EndLineInt != nil {
+		v := *in.EndLineInt
+		out.EndLineInt = &v
+	}
 	if in.TKNums != nil {
 		v := *in.TKNums
 		out.TKNums = &v
@@ -991,7 +1029,11 @@ func tokenizeChunks(chunks []schema.ChunkDoc, titleStem string, language string)
 	tok := tokenizer.New(language)
 	for i := range chunks {
 		ck := &chunks[i]
-		titleTk, err := tok.Tokenize(titleStem)
+		chunkTitle := titleStem
+		if ck.SourcePathKwd != "" {
+			chunkTitle = ck.SourcePathKwd
+		}
+		titleTk, err := tok.Tokenize(chunkTitle)
 		if err != nil {
 			return fmt.Errorf("tokenizer: title tokenize: %w", err)
 		}
@@ -1001,6 +1043,24 @@ func tokenizeChunks(chunks []schema.ChunkDoc, titleStem string, language string)
 		}
 		ck.TitleTks = titleTk
 		ck.TitleSmTks = titleSmTk
+		if ck.SourcePathKwd != "" {
+			ck.CodeTitleTks = titleTk
+			ck.CodeTitleSmTks = titleSmTk
+			ck.CodeTerms = ck.SourcePathKwd + " " + codeIdentifierTerms(ck.SourcePathKwd+" "+ck.Text)
+			ck.Keywords = ""
+			keywords := codeSymbolKeywords(ck.CodeSymbols)
+			if err = ck.SetExtraValue("important_kwd", keywords); err != nil {
+				return fmt.Errorf("tokenizer: code symbols marshal: %w", err)
+			}
+			names := strings.Join(keywords, " ")
+			important, tokenizeErr := tok.Tokenize(names + " " + codeIdentifierTerms(names))
+			if tokenizeErr != nil {
+				return fmt.Errorf("tokenizer: code symbols tokenize: %w", tokenizeErr)
+			}
+			if err = ck.SetExtraValue("important_tks", important); err != nil {
+				return fmt.Errorf("tokenizer: code symbol tokens marshal: %w", err)
+			}
+		}
 
 		// Question / keyword / summary fields are optional. The python
 		// path branches on each independently.
@@ -1063,6 +1123,9 @@ func tokenizeChunks(chunks []schema.ChunkDoc, titleStem string, language string)
 			}
 			ck.ContentSmLtks = smt
 		} else if t := schema.ContextualText(*ck); strings.TrimSpace(t) != "" {
+			if ck.SourcePathKwd != "" {
+				t += "\n" + ck.CodeTerms
+			}
 			tt, err := tok.Tokenize(t)
 			if err != nil {
 				return fmt.Errorf("tokenizer: text tokenize: %w", err)

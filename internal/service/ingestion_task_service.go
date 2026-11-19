@@ -12,9 +12,12 @@ import (
 	"ragflow/internal/dao"
 	"ragflow/internal/engine/kvrocks"
 	"ragflow/internal/entity"
+	"ragflow/internal/ingestion/archiveartifact"
 	ingestionpipeline "ragflow/internal/ingestion/pipeline"
 	"ragflow/internal/observability"
+	"ragflow/internal/parser/codearchive"
 	"ragflow/internal/permission"
+	"ragflow/internal/service/archivepublication"
 	"ragflow/internal/utility"
 
 	"go.uber.org/zap"
@@ -331,6 +334,15 @@ func (s *IngestionTaskService) PrepareValidatedRun(ctx context.Context, task *en
 	if task == nil {
 		return
 	}
+	if scope, ok := archiveartifact.ScopeFrom(ctx); ok {
+		if err := archivepublication.Progress(ctx, dao.DB, scope, map[string]any{"progress": 0, "process_duration": 0, "process_begin_at": time.Now()}); err != nil {
+			return
+		}
+		s.advanceOpenLog(ctx, task, logFromUnstartOrScheduled, string(entity.TaskStatusRunning))
+		s.recordRunMessage(ctx, task, "Task is running...")
+		s.emitLifecycleEvent(ctx, task, "running", common.RUNNING, "")
+		return
+	}
 	if err := s.documentDAO.UpdateByID(ctx, dao.DB, task.DocumentID, map[string]interface{}{
 		"progress":         float64(0),
 		"process_duration": float64(0),
@@ -357,6 +369,12 @@ var ErrTaskNotInScope = errors.New("task status is not within the requested canc
 // RequestStop stops a task unconditionally (as long as its status is one it can
 // act on: CREATED/SCHEDULED/RUNNING). It is the per-task cancel path.
 func (s *IngestionTaskService) RequestStop(ctx context.Context, taskID string) (*entity.IngestionTask, error) {
+	if scope, ok := archiveartifact.ScopeFrom(ctx); ok {
+		if err := archivepublication.Terminate(ctx, dao.DB, scope, common.STOPPED, nil); err != nil {
+			return nil, err
+		}
+		return s.GetTask(ctx, taskID)
+	}
 	task, err := s.GetTask(ctx, taskID)
 	if err != nil {
 		return nil, err
@@ -373,6 +391,9 @@ func (s *IngestionTaskService) stopActiveTask(ctx context.Context, task *entity.
 	case common.CREATED, common.SCHEDULED:
 		stopped, err := s.transitionFrom(ctx, task.ID, []string{common.CREATED, common.SCHEDULED}, common.STOPPED)
 		if err != nil {
+			return nil, err
+		}
+		if _, err := s.settlePendingArchive(ctx, stopped, common.STOPPED); err != nil {
 			return nil, err
 		}
 		// The stop finalizes without a worker (no RUNNING phase, so no
@@ -498,8 +519,23 @@ func (s *IngestionTaskService) PrepareDocumentTaskForCleanup(ctx context.Context
 }
 
 func (s *IngestionTaskService) MarkCompleted(ctx context.Context, taskID string) error {
+	if scope, ok := archiveartifact.ScopeFrom(ctx); ok {
+		if err := archivepublication.Completed(ctx, dao.DB, scope); err != nil {
+			return err
+		}
+		s.emitArchiveTerminal(ctx, scope, "completed", common.COMPLETED, "")
+		return nil
+	}
 	task, err := s.GetTask(ctx, taskID)
 	if err != nil {
+		return err
+	}
+	doc, docErr := s.documentDAO.GetByID(ctx, dao.DB, task.DocumentID)
+	if docErr != nil && !errors.Is(docErr, gorm.ErrRecordNotFound) {
+		return docErr
+	}
+	if doc != nil && doc.ParserID == codearchive.ParserID {
+		_, err := archivepublication.Ready(ctx, dao.DB, task.DatasetID, task.DocumentID)
 		return err
 	}
 	if task.Status == common.COMPLETED || task.Status == common.STOPPED || task.Status == common.FAILED {
@@ -513,19 +549,20 @@ func (s *IngestionTaskService) MarkCompleted(ctx context.Context, taskID string)
 	return nil
 }
 
-// MarkFailed transitions a task to FAILED and emits a lifecycle event carrying
-// the terminal reason. This is the public entry point used by the ingestor,
-// which has the failure reason (timeout/panic/run-identity error) available at
-// the call site; passing it here is what populates the event's ErrorInfo.
-func (s *IngestionTaskService) MarkFailed(ctx context.Context, taskID, reason string) error {
-	return s.markFailed(ctx, taskID, reason)
-}
-
-// markFailed transitions a task to FAILED and emits a lifecycle event carrying
-// the terminal reason. The public MarkFailed forwards the reason supplied by
-// the ingestor (timeout/panic/run-identity error); internal paths such as
-// settlePublishFailure pass an explicit reason too.
-func (s *IngestionTaskService) markFailed(ctx context.Context, taskID, reason string) error {
+// MarkFailed retains the typed cause through archive terminal persistence.
+// Ordinary tasks keep their human-readable lifecycle event message.
+func (s *IngestionTaskService) MarkFailed(ctx context.Context, taskID string, cause error) error {
+	if scope, ok := archiveartifact.ScopeFrom(ctx); ok {
+		if err := archivepublication.Terminate(ctx, dao.DB, scope, common.FAILED, cause); err != nil {
+			return err
+		}
+		s.emitArchiveTerminal(ctx, scope, "failed", common.FAILED, codearchive.Reason(cause))
+		return nil
+	}
+	reason := ""
+	if cause != nil {
+		reason = cause.Error()
+	}
 	task, err := s.GetTask(ctx, taskID)
 	if err != nil {
 		return err
@@ -545,6 +582,13 @@ func (s *IngestionTaskService) markFailed(ctx context.Context, taskID, reason st
 // Idempotent: returns nil if the task is already in a terminal state
 // (STOPPED, COMPLETED, or FAILED).
 func (s *IngestionTaskService) MarkStopped(ctx context.Context, taskID string) error {
+	if scope, ok := archiveartifact.ScopeFrom(ctx); ok {
+		if err := archivepublication.Terminate(ctx, dao.DB, scope, common.STOPPED, nil); err != nil {
+			return err
+		}
+		s.emitArchiveTerminal(ctx, scope, "stopped", common.STOPPED, "")
+		return nil
+	}
 	task, err := s.GetTask(ctx, taskID)
 	if err != nil {
 		return err
@@ -941,7 +985,17 @@ func (s *IngestionTaskService) settlePublishFailure(ctx context.Context, task *e
 	if task == nil {
 		return
 	}
-	if err := s.markFailed(ctx, task.ID, "Task publish failed."); err != nil {
+	if handled, err := s.settlePendingArchive(ctx, task, common.FAILED); handled || err != nil {
+		if err != nil {
+			common.Warn(fmt.Sprintf("archive enqueue failure settlement for task %s: %v", task.ID, err))
+			return
+		}
+		task.Status = common.FAILED
+		s.advanceOpenLog(ctx, task, dao.OpenPipelineOperationStatuses(), string(entity.TaskStatusFail))
+		s.recordRunTerminal(ctx, task, "Task publish failed.")
+		return
+	}
+	if err := s.MarkFailed(ctx, task.ID, errors.New("Task publish failed.")); err != nil {
 		common.Error(fmt.Sprintf("mark task %s failed after publish failure", task.ID), err)
 		return
 	}
@@ -993,8 +1047,16 @@ func (s *IngestionTaskService) ensureRunIdentity(ctx context.Context, task *enti
 	input.OperationStatus = string(entity.TaskStatusUnstart)
 	var boundLogID string
 	err = dao.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if input.ParserID == codearchive.ParserID || codearchive.IsArchive(input.DocumentName) || strings.EqualFold(strings.TrimPrefix(input.DocumentSuffix, "."), "zip") {
+			if err := archivepublication.LockDataset(ctx, tx, input.KbID); err != nil {
+				return err
+			}
+		}
 		lockedDocument, err := s.documentDAO.GetByIDForUpdate(ctx, tx, task.DocumentID)
 		if err != nil {
+			return err
+		}
+		if err := validateQueuedArchive(lockedDocument); err != nil {
 			return err
 		}
 		lockedTask, err := s.ingestionTaskDAO.GetByIDForUpdate(ctx, tx, task.ID)
@@ -1016,6 +1078,9 @@ func (s *IngestionTaskService) ensureRunIdentity(ctx context.Context, task *enti
 				return fmt.Errorf("task %s has invalid pipeline run binding %s", lockedTask.ID, bound.ID)
 			}
 			boundLogID = bound.ID
+			if lockedDocument.ParserID == codearchive.ParserID {
+				return queueArchiveSnapshot(ctx, tx, archiveartifact.Scope{DocID: lockedTask.DocumentID, KBID: lockedTask.DatasetID, TaskID: lockedTask.ID, RunID: boundLogID}, lockedDocument)
+			}
 			return nil
 		}
 
@@ -1032,6 +1097,9 @@ func (s *IngestionTaskService) ensureRunIdentity(ctx context.Context, task *enti
 			return err
 		}
 		boundLogID = log.ID
+		if lockedDocument.ParserID == codearchive.ParserID {
+			return queueArchiveSnapshot(ctx, tx, archiveartifact.Scope{DocID: lockedTask.DocumentID, KBID: lockedTask.DatasetID, TaskID: lockedTask.ID, RunID: boundLogID}, lockedDocument)
+		}
 		return nil
 	})
 	if err != nil {
@@ -1067,6 +1135,10 @@ func (s *IngestionTaskService) advanceOpenLogIfOpen(ctx context.Context, task *e
 	if logID == "" {
 		common.Warn(fmt.Sprintf("advance open pipeline log for task %s: missing run identity", task.ID))
 		return false, nil
+	}
+	if scope, ok := archiveartifact.ScopeFrom(ctx); ok {
+		result := archivepublication.Fence(dao.DB.WithContext(ctx).Model(&entity.PipelineOperationLog{}).Where("id = ? AND operation_status IN ?", logID, fromStatuses), scope).Update("operation_status", operationStatus)
+		return result.RowsAffected == 1, result.Error
 	}
 	advanced, err := s.pipelineLogDAO.AdvanceOpenLog(ctx, dao.DB, logID, fromStatuses, operationStatus)
 	if err != nil {
@@ -1174,6 +1246,10 @@ func (s *IngestionTaskService) buildOpenLogInput(ctx context.Context, task *enti
 // UpdateComponentTotal records the number of components in the task's DSL
 // graph - the authoritative denominator for progress percentage.
 func (s *IngestionTaskService) UpdateComponentTotal(ctx context.Context, taskID string, total int) error {
+	if scope, ok := archiveartifact.ScopeFrom(ctx); ok {
+		return dao.DB.WithContext(ctx).Model(&entity.IngestionTask{}).Where("id = ? AND pipeline_log_id = ? AND status = ?", taskID, scope.RunID, common.RUNNING).
+			Where("EXISTS (SELECT 1 FROM document_code_archive ap WHERE ap.task_id = ? AND ap.run_id = ? AND ap.attempt_id = ? AND ap.status = ? AND ap.lease_until > ?)", taskID, scope.RunID, scope.AttemptID, "running", time.Now().UnixMilli()).Update("component_total", total).Error
+	}
 	return s.ingestionTaskDAO.UpdateComponentTotal(ctx, dao.DB, taskID, total)
 }
 
@@ -1295,19 +1371,28 @@ func (s *IngestionTaskService) insertEventOnDB(ctx context.Context, db *gorm.DB,
 	// EventTypeLifecycle is zero while the database default is the defensive
 	// legacy value. A map keeps the explicitly mapped protocol value intact;
 	// GORM otherwise substitutes a default-tag value for a zero struct field.
-	return db.WithContext(ctx).Model(&entity.IngestionTaskLog{}).Create(map[string]interface{}{
-		"task_id":         taskID,
-		"pipeline_log_id": pipelineLogID,
-		"checkpoint":      entity.JSONMap{},
-		"phase":           phase,
-		"event_type":      eventType,
-		"component":       component,
-		"message":         message,
-		"create_time":     now.UnixMilli(),
-		"create_date":     now.Truncate(time.Second),
-		"update_time":     now.UnixMilli(),
-		"update_date":     now.Truncate(time.Second),
-	}).Error
+	write := func(db *gorm.DB) error {
+		return db.WithContext(ctx).Model(&entity.IngestionTaskLog{}).Create(map[string]interface{}{
+			"task_id":         taskID,
+			"pipeline_log_id": pipelineLogID,
+			"checkpoint":      entity.JSONMap{},
+			"phase":           phase,
+			"event_type":      eventType,
+			"component":       component,
+			"message":         message,
+			"create_time":     now.UnixMilli(),
+			"create_date":     now.Truncate(time.Second),
+			"update_time":     now.UnixMilli(),
+			"update_date":     now.Truncate(time.Second),
+		}).Error
+	}
+	if scope, ok := archiveartifact.ScopeFrom(ctx); ok {
+		if scope.TaskID != taskID || scope.RunID != pipelineLogID {
+			return archivepublication.ErrSuperseded
+		}
+		return archivepublication.WithCurrent(ctx, db, scope, write)
+	}
+	return write(db)
 }
 
 // truncateIngestionEventMessage enforces both limits on the persisted text.

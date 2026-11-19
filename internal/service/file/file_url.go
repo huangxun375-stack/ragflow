@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"ragflow/internal/parser/codearchive"
 	"ragflow/internal/permission"
 	"ragflow/internal/storage"
 	"ragflow/internal/utility"
@@ -31,6 +32,9 @@ func (s *FileService) UploadFromURL(ctx context.Context, rawURL string) (map[str
 	}
 	if rawURL == "" {
 		return nil, fmt.Errorf("url is required")
+	}
+	if utility.IsArchiveURL(rawURL) {
+		return nil, fmt.Errorf("%w: use a dataset ZIP upload", &codearchive.Error{Code: "ZIP_ATTACHMENT_UNSUPPORTED"})
 	}
 	parsed, err := url.Parse(rawURL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {

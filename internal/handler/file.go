@@ -668,7 +668,7 @@ func linkToDatasetsErrorCode(err error) common.ErrorCode {
 		errors.Is(err, permission.ErrPermissionDenied), errors.Is(err, permission.ErrResourceNotFound):
 		code, _ := permissionresponse.Normalize(err)
 		return code
-	case errors.Is(err, document.ErrLinkFileNotFound), errors.Is(err, document.ErrLinkDatasetNotFound):
+	case errors.Is(err, document.ErrLinkFileNotFound), errors.Is(err, document.ErrLinkDatasetNotFound), errors.Is(err, document.ErrLinkArchiveUnsupported):
 		return common.CodeDataError
 	default:
 		return common.CodeServerError

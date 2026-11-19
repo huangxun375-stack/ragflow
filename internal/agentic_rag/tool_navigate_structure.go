@@ -42,8 +42,10 @@ import (
 	"go.uber.org/zap"
 
 	"ragflow/internal/common"
+	"ragflow/internal/dao"
 	"ragflow/internal/engine"
 	enginetypes "ragflow/internal/engine/types"
+	"ragflow/internal/service/archivepublication"
 	"ragflow/internal/service/nav"
 )
 
@@ -769,8 +771,17 @@ func structureNodeLoader(ctx context.Context, tenantID string, ids []string) []c
 		Filter:       map[string]interface{}{"id": ids},
 		Limit:        len(ids),
 	}
+	var filterErr error
+	req.Filter, filterErr = archivepublication.FilterForTenants(ctx, dao.DB, []string{tenantID}, req.Filter)
+	if filterErr != nil {
+		return nil
+	}
+	req.SelectFields = append(req.SelectFields, archivepublication.ReadSourceFields()...)
 	res, err := de.Search(ctx, req)
 	if err != nil {
+		return nil
+	}
+	if err := archivepublication.CheckRows(ctx, dao.DB, nil, res.Chunks); err != nil {
 		return nil
 	}
 	out := make([]chunkWithText, 0, len(res.Chunks))

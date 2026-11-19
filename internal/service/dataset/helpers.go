@@ -69,6 +69,9 @@ const (
 // canonicalDatasetParserID resolves a parser ID to its canonical builtin ID.
 // The registry retains legacy aliases such as naive -> general for old clients.
 func canonicalDatasetParserID(parserID string) (string, error) {
+	if parserID == "code_archive" {
+		return "", errors.New("code_archive is selected automatically for ZIP uploads and cannot be a dataset default")
+	}
 	if parserID == "knowledge_graph" {
 		return parserID, nil
 	}

@@ -150,7 +150,7 @@ type fakeDocumentService struct {
 	metadataKBID           string
 	metadataDocIDs         []string
 	uploadLocalData        []map[string]interface{}
-	uploadLocalErrs        []string
+	uploadLocalErrs        []document.UploadFailure
 	uploadLocalKB          *entity.Knowledgebase
 	uploadLocalPath        string
 	uploadOverride         map[string]interface{}
@@ -357,7 +357,7 @@ func (f *fakeDocumentService) HasActiveIngestionTasks(ctx context.Context, datas
 func (f *fakeDocumentService) GetDocumentMetadataByID(ctx context.Context, docID string) (map[string]interface{}, error) {
 	return nil, nil
 }
-func (f *fakeDocumentService) UploadLocalDocuments(ctx context.Context, kb *entity.Knowledgebase, files []*multipart.FileHeader, parentPath string, parserConfigOverride map[string]interface{}) ([]map[string]interface{}, []string) {
+func (f *fakeDocumentService) UploadLocalDocuments(ctx context.Context, kb *entity.Knowledgebase, files []*multipart.FileHeader, parentPath string, parserConfigOverride map[string]interface{}) ([]map[string]interface{}, []document.UploadFailure) {
 	f.uploadLocalKB = kb
 	f.uploadLocalPath = parentPath
 	f.uploadOverride = parserConfigOverride
@@ -923,7 +923,7 @@ func TestUploadDocumentsHandler_LocalPartialFailureOmitsData(t *testing.T) {
 		uploadLocalData: []map[string]interface{}{
 			{"id": "doc-1", "kb_id": "ds-1", "parser_id": "naive", "chunk_num": int64(0), "token_num": int64(0), "name": "ok.txt"},
 		},
-		uploadLocalErrs: []string{"bad.exe: This type of file has not been supported yet!"},
+		uploadLocalErrs: []document.UploadFailure{{Filename: "bad.exe", Err: fmt.Errorf("This type of file has not been supported yet!"), Code: common.CodeServerError}},
 	}
 	h := &DocumentHandler{
 		documentService: fake,

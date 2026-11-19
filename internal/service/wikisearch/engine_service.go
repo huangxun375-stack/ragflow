@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"strings"
 
+	"ragflow/internal/dao"
 	"ragflow/internal/engine"
 	"ragflow/internal/engine/types"
+	"ragflow/internal/service/archivepublication"
 )
 
 // compileKWDWikiPage identifies the wiki page role.
@@ -166,13 +168,18 @@ func (s *engineWikiService) BackfillChunks(ctx context.Context, tenantID string,
 		if !ok {
 			continue
 		}
+		if err := archivepublication.CheckRows(ctx, dao.DB, datasetIDs, []map[string]any{m}); err != nil {
+			return nil, err
+		}
 		// GetChunk rows also carry id/kb_id (ES shims id to _id; source["id"]
 		// set in chunk.go:1991). Normalize to the agent chunk shape.
-		out = append(out, map[string]interface{}{
+		chunk := map[string]interface{}{
 			"chunk_id": firstString(m["id"]), "content_with_weight": firstString(m["content_with_weight"]),
 			"doc_id": firstString(m["doc_id"]), "docnm_kwd": firstString(m["docnm_kwd"]),
 			"dataset_id": firstString(m["kb_id"]),
-		})
+		}
+		archivepublication.CopySourceFields(chunk, m)
+		out = append(out, chunk)
 	}
 	return out, nil
 }

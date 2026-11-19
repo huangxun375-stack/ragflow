@@ -18,11 +18,12 @@ package common
 
 // Canonical ingestion component names.
 const (
-	ComponentNameFile      = "File"
-	ComponentNameParser    = "Parser"
-	ComponentNameExtractor = "Extractor"
-	ComponentNameCompiler  = "Compiler"
-	ComponentNameTokenizer = "Tokenizer"
+	ComponentNameFile        = "File"
+	ComponentNameParser      = "Parser"
+	ComponentNameExtractor   = "Extractor"
+	ComponentNameCompiler    = "Compiler"
+	ComponentNameTokenizer   = "Tokenizer"
+	ComponentNameCodeArchive = "CodeArchive"
 
 	ComponentNameGeneralChunker        = "GeneralChunker"
 	ComponentNameTokenChunker          = "TokenChunker"
@@ -44,6 +45,7 @@ func IsComponentName(name string) bool {
 		ComponentNameExtractor,
 		ComponentNameCompiler,
 		ComponentNameTokenizer,
+		ComponentNameCodeArchive,
 		ComponentNameGeneralChunker,
 		ComponentNameTokenChunker,
 		ComponentNameTitleChunker,

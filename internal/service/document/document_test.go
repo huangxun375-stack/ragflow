@@ -538,6 +538,8 @@ func setupServiceTestDBWithDSN(t *testing.T, dsn string) *gorm.DB {
 
 	// Migrate tables used by deleteDocumentFull + DeleteDocuments
 	models := []interface{}{
+		&entity.DocumentCodeArchive{}, &entity.ArchiveRun{}, &entity.ArchiveAttempt{},
+		&entity.ArchiveDatasetFence{},
 		&entity.Document{},
 		&entity.Knowledgebase{},
 		&entity.PipelineOperationLog{},
@@ -3698,6 +3700,7 @@ func TestClearDocumentParseResultsDeletesTaskBeforePurgingState(t *testing.T) {
 // contract: source chunks and final compiled products (tree/structure/mindmap)
 // follow the document status; wiki staging and unknown-kwd rows stay hidden.
 func TestUpdateDocumentChunkAvailabilityTogglesFinalProducts(t *testing.T) {
+	pushServiceDB(t, setupServiceTestDB(t))
 	docEngine := &sourceAvailabilityDocEngine{}
 	svc := testDocumentService(t)
 	svc.docEngine = docEngine
@@ -4992,7 +4995,7 @@ func TestGetDocumentImageRejectsUnindexedObjectBeforeStorage(t *testing.T) {
 	if err := store.Put(ctx, kbID, "raw.pdf", []byte("%PDF-1.7")); err != nil {
 		t.Fatal(err)
 	}
-	svc := NewDocumentService()
+	svc := testDocumentService(t)
 	svc.docEngine = engine
 
 	if _, err := svc.GetDocumentImage(ctx, kbID+"-raw.pdf"); !errors.Is(err, ErrDocumentImageNotFound) {
@@ -5026,7 +5029,7 @@ func TestGetDocumentImageForDocumentAllowsIndexedSharedBucketImage(t *testing.T)
 	if err := store.Put(ctx, "imagetemps", "page-1.png", image); err != nil {
 		t.Fatal(err)
 	}
-	svc := NewDocumentService()
+	svc := testDocumentService(t)
 	svc.docEngine = engine
 
 	got, err := svc.GetDocumentImageForDocument(ctx, "doc-1", imageID)

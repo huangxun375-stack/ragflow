@@ -734,13 +734,14 @@ func GetTermTag(term string) string {
 
 var cl100kEncoder struct {
 	sync.Once
-	enc *tiktoken.Tiktoken
-	err error
+	enc   *tiktoken.Tiktoken
+	count *cl100kCountEncoder
+	err   error
 }
 
 func getCL100KEncoder() (*tiktoken.Tiktoken, error) {
 	cl100kEncoder.Do(func() {
-		cl100kEncoder.enc, cl100kEncoder.err = tiktoken.GetEncoding("cl100k_base")
+		cl100kEncoder.enc, cl100kEncoder.count, cl100kEncoder.err = loadCL100KCountingEncoder()
 	})
 	return cl100kEncoder.enc, cl100kEncoder.err
 }
@@ -753,8 +754,9 @@ func getCL100KEncoder() (*tiktoken.Tiktoken, error) {
 func resetCL100KEncoderForTest() {
 	cl100kEncoder = struct {
 		sync.Once
-		enc *tiktoken.Tiktoken
-		err error
+		enc   *tiktoken.Tiktoken
+		count *cl100kCountEncoder
+		err   error
 	}{}
 }
 
@@ -802,7 +804,7 @@ func NumTokensFromString(s string) int {
 	if enc == nil {
 		panic("tokenizer.NumTokensFromString: cl100k_base encoder is nil")
 	}
-	return len(enc.Encode(s, nil, nil))
+	return cl100kEncoder.count.count(s)
 }
 
 // TrimContentToTokenLimit truncates s to at most limit tokens using the
@@ -831,12 +833,12 @@ func TrimContentToTokenLimit(s string, limit int) string {
 	if enc == nil {
 		panic("tokenizer.TrimContentToTokenLimit: cl100k_base encoder is nil")
 	}
-	tokens := enc.Encode(s, nil, nil)
-	if len(tokens) <= limit {
+	if cl100kEncoder.count.count(s) <= limit {
 		return s
 	}
+	tokens := enc.EncodeOrdinary(s)
 	trimmed := clampToValidUTF8(enc.Decode(tokens[:limit]))
-	for i := 0; i < utf8.UTFMax && len(trimmed) > 0 && len(enc.Encode(trimmed, nil, nil)) > limit; i++ {
+	for i := 0; i < utf8.UTFMax && len(trimmed) > 0 && cl100kEncoder.count.count(trimmed) > limit; i++ {
 		trimmed = dropLastRune(trimmed)
 	}
 	return trimmed

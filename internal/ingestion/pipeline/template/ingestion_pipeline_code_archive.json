@@ -1,0 +1,25 @@
+{
+  "id": 101,
+  "title": {"en":"Code archive", "zh":"代码压缩包"},
+  "description": {"en":"Parse a code ZIP with safe in-memory reading and source-aware chunks.", "zh":"安全读取 ZIP 代码包，按代码结构切片并保留文件路径和行号。"},
+  "canvas_type": "Ingestion Pipeline",
+  "canvas_category": "dataflow_canvas",
+  "dsl": {
+    "graph": {
+      "nodes": [
+        {"id":"File","type":"beginNode","position":{"x":50,"y":200},"data":{"label":"File","name":"File"}},
+        {"id":"CodeArchive:Archive","type":"parserNode","position":{"x":350,"y":200},"data":{"label":"CodeArchive","name":"Code archive","form":{"chunk_token_num":512,"code_file_overview":false}}},
+        {"id":"Tokenizer:Archive","type":"tokenizerNode","position":{"x":650,"y":200},"data":{"label":"Tokenizer","name":"Indexer","form":{"search_method":["full_text","embedding"],"fields":["text"],"filename_embd_weight":0}}}
+      ],
+      "edges": [
+        {"id":"archive-file","source":"File","sourceHandle":"start","target":"CodeArchive:Archive","targetHandle":"end"},
+        {"id":"archive-tokenizer","source":"CodeArchive:Archive","sourceHandle":"start","target":"Tokenizer:Archive","targetHandle":"end"}
+      ]
+    },
+    "components": {
+      "File": {"obj":{"component_name":"File","params":{}},"upstream":[],"downstream":["CodeArchive:Archive"]},
+      "CodeArchive:Archive": {"obj":{"component_name":"CodeArchive","params":{"chunk_token_num":512,"code_file_overview":false}},"upstream":["File"],"downstream":["Tokenizer:Archive"]},
+      "Tokenizer:Archive": {"obj":{"component_name":"Tokenizer","params":{"search_method":["full_text","embedding"],"fields":["text"],"filename_embd_weight":0}},"upstream":["CodeArchive:Archive"],"downstream":[]}
+    }
+  }
+}

@@ -18,6 +18,7 @@ package task
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +32,7 @@ import (
 	enginetypes "ragflow/internal/engine/types"
 	"ragflow/internal/entity"
 	"ragflow/internal/ingestion"
+	"ragflow/internal/ingestion/archiveartifact"
 	"ragflow/internal/ingestion/chunkcache"
 	"ragflow/internal/ingestion/component"
 	"ragflow/internal/ingestion/component/globals"
@@ -39,6 +41,8 @@ import (
 	"ragflow/internal/ingestion/mediacache"
 	pipelinepkg "ragflow/internal/ingestion/pipeline"
 	indexdoc "ragflow/internal/ingestion/task/indexdoc"
+	"ragflow/internal/parser/codearchive"
+	"ragflow/internal/service/archivepublication"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -48,6 +52,7 @@ import (
 // indexed, and these bookkeeping inputs remain for the caller to apply to
 // document state (metadata merge + chunk/token counter bumps).
 type PipelineResult struct {
+	ArchiveArtifact  *archiveartifact.Artifact
 	DocID            string
 	KbID             string
 	Metadata         map[string]any
@@ -174,6 +179,9 @@ func NewPipelineExecutor(
 			docBulkSize,
 		).withFinalInsertFunc(insertFinalChunksForIngestion(deps.Engine, datasetLanguage(taskCtx))),
 		deleteChunksFunc: func(ctx context.Context, condition map[string]any, baseName, datasetID string) (int64, error) {
+			if deps.Engine == nil {
+				return 0, fmt.Errorf("chunk cleanup requires an index engine")
+			}
 			return deps.Engine.DeleteChunks(ctx, condition, baseName, datasetID)
 		},
 	}
@@ -233,6 +241,19 @@ func (s *PipelineExecutor) Execute(ctx context.Context) (*PipelineResult, error)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	var collector *archiveartifact.Collector
+	if s.taskCtx.Doc.ParserID == codearchive.ParserID {
+		if !s.taskCtx.IsDebug() {
+			scope, ok := archiveartifact.ScopeFrom(ctx)
+			if !ok || scope.DocID != s.taskCtx.Doc.ID || scope.KBID != s.taskCtx.Doc.KbID || scope.AttemptID == "" {
+				return nil, fmt.Errorf("archive pipeline requires a claimed attempt")
+			}
+		}
+		ctx, collector = archiveartifact.WithCollector(ctx)
+		// Archive attempts never resume another attempt's component cache.
+		// Their immutable cache namespace can be removed on every exit.
+		defer s.purgeRunState(ctx)
+	}
 
 	dsl, correctedID, err := s.loadDSLFunc(ctx, s.canvasID)
 	if err != nil {
@@ -255,13 +276,27 @@ func (s *PipelineExecutor) Execute(ctx context.Context) (*PipelineResult, error)
 	if s.taskCtx.IsDebug() {
 		return s.collectDebugOutput(ctx, pipelineOutput, start)
 	}
+	var artifact *archiveartifact.Artifact
+	if collector != nil {
+		collected, err := collector.Take()
+		if err != nil {
+			return nil, err
+		}
+		if len(indexdoc.NormalizeChunks(pipelineOutput)) == 0 {
+			return nil, fmt.Errorf("archive pipeline produced no chunks")
+		}
+		artifact = &collected
+	}
 
 	result, err := s.processOutput(ctx, pipelineOutput, start)
 	if err != nil {
 		return nil, err
 	}
+	if result != nil {
+		result.ArchiveArtifact = artifact
+	}
 
-	if pipelineDSL != "" && s.taskCtx.IngestionTask != nil && s.taskCtx.IngestionTask.PipelineLogID != nil && *s.taskCtx.IngestionTask.PipelineLogID != "" {
+	if artifact == nil && pipelineDSL != "" && s.taskCtx.IngestionTask != nil && s.taskCtx.IngestionTask.PipelineLogID != nil && *s.taskCtx.IngestionTask.PipelineLogID != "" {
 		var terminalDuration *float64
 		if result != nil {
 			terminalDuration = &result.Duration
@@ -359,9 +394,20 @@ func (s *PipelineExecutor) processOutput(ctx context.Context, pipelineOutput map
 		return nil, err
 	}
 	indexChunks := append(chunks, parentChunks...)
+	if scope, ok := archiveartifact.ScopeFrom(ctx); ok {
+		if err := archivepublication.CheckActive(ctx, s.deps.DB, scope); err != nil {
+			return nil, err
+		}
+		stampArchiveGeneration(indexChunks, scope)
+	}
 	indexdoc.StampDatasetPagerank(indexChunks, s.taskCtx.KB.Pagerank)
-	if err := s.indexWriter.Write(ctx, indexChunks); err != nil {
-		if cleanupErr := s.compensateFailedIndexWrite(ctx, indexChunks); cleanupErr != nil {
+	writer := *s.indexWriter
+	if scope, ok := archiveartifact.ScopeFrom(ctx); ok {
+		writer.insertFunc = guardArchiveInsert(writer.insertFunc, s.deps.DB, scope)
+		writer.finalInsertFunc = guardArchiveInsert(writer.finalInsertFunc, s.deps.DB, scope)
+	}
+	if err := writer.Write(ctx, indexChunks); err != nil {
+		if cleanupErr := s.compensateFailedIndexWrite(ctx, indexChunks, err); cleanupErr != nil {
 			return nil, fmt.Errorf("write chunks: %w; compensate partial index write: %v", err, cleanupErr)
 		}
 		return nil, fmt.Errorf("write chunks: %w", err)
@@ -423,6 +469,9 @@ func (s *PipelineExecutor) purgeRunState(ctx context.Context) {
 	if s.taskCtx.IngestionTask != nil {
 		taskID = s.taskCtx.IngestionTask.ID
 	}
+	if scope, ok := archiveartifact.ScopeFrom(ctx); ok {
+		taskID = "archive_" + scope.AttemptID
+	}
 	if taskID == "" && s.taskCtx.IsDebug() {
 		taskID = "pipeline_" + s.taskCtx.Doc.ID
 	}
@@ -439,7 +488,7 @@ func (s *PipelineExecutor) purgeRunState(ctx context.Context) {
 	}
 }
 
-func (s *PipelineExecutor) compensateFailedIndexWrite(ctx context.Context, chunks []map[string]any) error {
+func (s *PipelineExecutor) compensateFailedIndexWrite(ctx context.Context, chunks []map[string]any, cause error) error {
 	if s.deleteChunksFunc == nil {
 		return nil
 	}
@@ -459,15 +508,27 @@ func (s *PipelineExecutor) compensateFailedIndexWrite(ctx context.Context, chunk
 	if len(ids) == 0 {
 		return nil
 	}
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-	_, err := s.deleteChunksFunc(
-		cleanupCtx,
-		map[string]any{"id": ids, "kb_id": s.taskCtx.Doc.KbID},
-		s.indexWriter.baseName,
-		s.taskCtx.Doc.KbID,
-	)
-	return err
+	return s.compensateIndexRows(ctx, map[string]any{"id": ids, "kb_id": s.taskCtx.Doc.KbID}, s.taskCtx.Doc.KbID, 5*time.Second, cause)
+}
+
+func stampArchiveGeneration(chunks []map[string]any, scope archiveartifact.Scope) {
+	ids := make(map[string]string, len(chunks))
+	for i, chunk := range chunks {
+		old, _ := chunk["id"].(string)
+		sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%d", scope.DocID, scope.RunID, scope.AttemptID, old, i)))
+		id := fmt.Sprintf("%x", sum[:16])
+		ids[old] = id
+		chunk["id"] = id
+		chunk["archive_run_kwd"] = scope.RunID
+		chunk["archive_attempt_kwd"] = scope.AttemptID
+	}
+	for _, chunk := range chunks {
+		if parent, ok := chunk["mom_id"].(string); ok {
+			if id, found := ids[parent]; found {
+				chunk["mom_id"] = id
+			}
+		}
+	}
 }
 
 // terminalDuration measures the run from the document's process_begin_at —
@@ -1030,9 +1091,12 @@ func updateOpenLogRow(ctx context.Context, db *gorm.DB, input PipelineLogInput, 
 	if doc.ProcessBeginAt != nil {
 		updates["process_begin_at"] = doc.ProcessBeginAt
 	}
-	result := db.WithContext(ctx).Model(&entity.PipelineOperationLog{}).
-		Where("id = ? AND operation_status IN ?", targetID, dao.OpenPipelineOperationStatuses()).
-		Updates(updates)
+	query := db.WithContext(ctx).Model(&entity.PipelineOperationLog{}).
+		Where("id = ? AND operation_status IN ?", targetID, dao.OpenPipelineOperationStatuses())
+	if scope, ok := archiveartifact.ScopeFrom(ctx); ok {
+		query = archivepublication.Fence(query, scope)
+	}
+	result := query.Updates(updates)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -1177,6 +1241,11 @@ func (s *PipelineExecutor) runPipelineWithDSL(ctx context.Context, dsl string) (
 	if s == nil || s.taskCtx == nil {
 		return nil, dsl, fmt.Errorf("pipeline executor: nil task context")
 	}
+	var err error
+	ctx, err = s.prepareCodeArchive(ctx)
+	if err != nil {
+		return nil, dsl, err
+	}
 
 	parserConfig := map[string]interface{}(s.taskCtx.Doc.ParserConfig)
 	if parserConfig == nil {
@@ -1202,6 +1271,9 @@ func (s *PipelineExecutor) runPipelineWithDSL(ctx context.Context, dsl string) (
 	pipelineID := "pipeline_" + s.taskCtx.Doc.ID
 	if s.taskCtx.IngestionTask != nil && s.taskCtx.IngestionTask.ID != "" {
 		pipelineID = s.taskCtx.IngestionTask.ID
+	}
+	if scope, ok := archiveartifact.ScopeFrom(ctx); ok {
+		pipelineID = "archive_" + scope.AttemptID
 	}
 	pipe, err := pipelinepkg.NewPipelineFromDSL([]byte(dsl), pipelineID,
 		pipelinepkg.WithProgressSink(s.progressSink),

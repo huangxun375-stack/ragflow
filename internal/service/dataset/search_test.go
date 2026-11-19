@@ -125,6 +125,12 @@ func TestKnowledgeCompilationFilter(t *testing.T) {
 func matchesKnowledgeCompilationFilter(filter, row map[string]interface{}) bool {
 	for field, value := range filter {
 		switch field {
+		case "and":
+			for _, branch := range types.FilterClauses(value) {
+				if !matchesKnowledgeCompilationFilter(branch, row) {
+					return false
+				}
+			}
 		case "or":
 			matched := false
 			for _, branch := range types.FilterClauses(value) {
@@ -199,6 +205,7 @@ func TestFormatDatasetSearchChunksCompilationVisibility(t *testing.T) {
 }
 
 func TestDisabledCompilationStillPromotesOrdinaryParent(t *testing.T) {
+	pushServiceDB(t, setupServiceTestDB(t))
 	disabled := false
 	eng := &compilationSearchEngine{rows: []map[string]interface{}{
 		{"id": "compiled", "compile_kwd": "page_index", "available_int": 1},
@@ -223,14 +230,23 @@ func TestDisabledCompilationStillPromotesOrdinaryParent(t *testing.T) {
 	if _, present := chunks[0]["compile_kwd"]; present {
 		t.Fatalf("disabled response has compilation marker: %#v", chunks[0])
 	}
+	if eng.lastRequest == nil || eng.lastRequest.Filter["and"] == nil {
+		t.Fatal("parent lookup omitted archive publication exclusion")
+	}
+	orphan := map[string]any{"id": "parent-1", "doc_id": "doc-1", "kb_id": "kb-1", "archive_run_kwd": "deleted-run"}
+	if matchesKnowledgeCompilationFilter(eng.lastRequest.Filter, orphan) {
+		t.Fatal("parent lookup would admit an orphan archive generation")
+	}
 }
 
 type compilationSearchEngine struct {
 	fakeChatDocEngine
-	rows []map[string]interface{}
+	rows        []map[string]interface{}
+	lastRequest *types.SearchRequest
 }
 
 func (e *compilationSearchEngine) Search(_ context.Context, req *types.SearchRequest) (*types.SearchResult, error) {
+	e.lastRequest = req
 	var chunks []map[string]interface{}
 	for _, row := range e.rows {
 		if !matchesKnowledgeCompilationFilter(req.Filter, row) {

@@ -34,6 +34,7 @@ import (
 	"ragflow/internal/ingestion/knowledge_compile"
 	"ragflow/internal/permission"
 	"ragflow/internal/service"
+	"ragflow/internal/service/archivepublication"
 
 	appcommon "ragflow/internal/common"
 
@@ -241,6 +242,10 @@ func loadActiveSourceChunks(ctx context.Context, request knowledge_compile.WikiD
 	if docEngine == nil {
 		return nil, fmt.Errorf("Wiki dirty compile: document engine is unavailable")
 	}
+	filter, err := archivepublication.Filter(ctx, kcWiringDeps.DB, []string{request.DatasetID}, []string{request.DocumentID}, map[string]any{"doc_id": []string{request.DocumentID}, "available_int": 1})
+	if err != nil {
+		return nil, err
+	}
 	chunks := make([]map[string]any, 0)
 	for offset := 0; ; offset += 1000 {
 		result, err := docEngine.Search(ctx, &enginetypes.SearchRequest{
@@ -248,19 +253,19 @@ func loadActiveSourceChunks(ctx context.Context, request knowledge_compile.WikiD
 			KbIDs:      []string{request.DatasetID},
 			Offset:     offset,
 			Limit:      1000,
-			SelectFields: []string{
+			SelectFields: append([]string{
 				"id", "doc_id", "docnm_kwd", "content_with_weight", "available_int", "compile_kwd",
-			},
-			Filter: map[string]any{
-				"doc_id":        []string{request.DocumentID},
-				"available_int": 1,
-			},
+			}, archivepublication.ReadSourceFields()...),
+			Filter: filter,
 		})
 		if err != nil {
 			return nil, err
 		}
 		if result == nil {
 			break
+		}
+		if err := archivepublication.CheckRows(ctx, kcWiringDeps.DB, []string{request.DatasetID}, result.Chunks); err != nil {
+			return nil, err
 		}
 		for _, row := range result.Chunks {
 			if strings.TrimSpace(anyString(row["compile_kwd"])) != "" {

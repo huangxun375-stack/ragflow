@@ -302,3 +302,6 @@ gomod_cache
 parity/
 # downloaded Go native deps (fetched by ragflow_deps/download_go_deps.py)
 ragflow_deps/
+
+# Pinned code archive FFI and grammar downloads (tools/code_archive/prepare.sh)
+deps/code_archive/

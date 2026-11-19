@@ -31,6 +31,7 @@ import (
 	"ragflow/internal/dao"
 	"ragflow/internal/engine"
 	enginetypes "ragflow/internal/engine/types"
+	"ragflow/internal/service/archivepublication"
 
 	"go.uber.org/zap"
 )
@@ -82,21 +83,30 @@ func (g *GrepAdapter) ListByDocIDs(ctx context.Context, req runtime.GrepRequest)
 	// restricted to ordinary text chunks (available_int=1, no compile_kwd). When
 	// the caller requests a sort (e.g. reading order), push it down so the engine
 	// returns the deterministic first page.
+	filter, err := archivepublication.Filter(ectx, dao.DB, req.DatasetIDs, docIDs, map[string]any{"available_int": 1, "doc_id": docIDs, "must_not": map[string]any{"exists": "compile_kwd"}})
+	if err != nil {
+		return nil, err
+	}
+	fields := req.SelectFields
+	if len(fields) == 0 {
+		fields = grepChunksSelectFields
+	}
+	fields = append(append([]string{}, fields...), "doc_id")
+	fields = append(fields, archivepublication.ReadSourceFields()...)
 	res, err := se.SearchByRegexp(ectx, &enginetypes.RegexpSearchRequest{
 		TenantID:     req.TenantID,
 		KbIDs:        req.DatasetIDs,
 		Pattern:      ".*",
 		Sort:         sortExprFromFields(req.Sort), // reading order: doc_id, page_num_int, chunk_order_int
-		SelectFields: req.SelectFields,
+		SelectFields: fields,
 		ReturnAll:    true,
-		Filter: map[string]interface{}{
-			"available_int": 1,
-			"doc_id":        docIDs,
-			"must_not":      map[string]interface{}{"exists": "compile_kwd"},
-		},
+		Filter:       filter,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list_chunks: deep-read recall: %w", err)
+	}
+	if err := archivepublication.CheckRows(ectx, dao.DB, req.DatasetIDs, res.Chunks); err != nil {
+		return nil, err
 	}
 
 	out := make([]runtime.RetrievalChunk, 0, len(res.Chunks))
@@ -106,13 +116,19 @@ func (g *GrepAdapter) ListByDocIDs(ctx context.Context, req runtime.GrepRequest)
 			continue
 		}
 		out = append(out, runtime.RetrievalChunk{
-			ID:           runtime.FirstStringFromMap(raw, "id", "_id"),
-			Content:      content,
-			DocumentID:   runtime.StringFromMap(raw, "doc_id"),
-			DocumentName: runtime.StringFromMap(raw, "docnm_kwd"),
-			DatasetID:    runtime.StringFromMap(raw, "kb_id"),
-			ChunkIndex:   runtime.IntFromMap(raw, "chunk_order_int"),
-			PageNum:      runtime.IntFromMap(raw, "page_num_int"),
+			SourcePath:       runtime.StringFromMap(raw, "source_path_kwd"),
+			StartLine:        runtime.IntFromMap(raw, "start_line_int"),
+			EndLine:          runtime.IntFromMap(raw, "end_line_int"),
+			CodeLanguage:     runtime.StringFromMap(raw, "code_lang_kwd"),
+			ArchiveRunID:     runtime.StringFromMap(raw, "archive_run_kwd"),
+			ArchiveAttemptID: runtime.StringFromMap(raw, "archive_attempt_kwd"),
+			ID:               runtime.FirstStringFromMap(raw, "id", "_id"),
+			Content:          content,
+			DocumentID:       runtime.StringFromMap(raw, "doc_id"),
+			DocumentName:     runtime.StringFromMap(raw, "docnm_kwd"),
+			DatasetID:        runtime.StringFromMap(raw, "kb_id"),
+			ChunkIndex:       runtime.IntFromMap(raw, "chunk_order_int"),
+			PageNum:          runtime.IntFromMap(raw, "page_num_int"),
 		})
 	}
 	return out, nil
@@ -223,6 +239,17 @@ func (g *GrepAdapter) fetchScoped(
 	if len(chunkIDs) > 0 {
 		filter["id"] = chunkIDs
 	}
+	var visibilityErr error
+	if len(req.DatasetIDs) == 0 && len(docIDs) == 0 {
+		filter, visibilityErr = archivepublication.FilterForTenants(ectx, dao.DB, []string{req.TenantID}, filter)
+	} else {
+		filter, visibilityErr = archivepublication.Filter(ectx, dao.DB, req.DatasetIDs, docIDs, filter)
+	}
+	if visibilityErr != nil {
+		return nil, visibilityErr
+	}
+	selectFields = append(append([]string{}, selectFields...), "doc_id")
+	selectFields = append(selectFields, archivepublication.ReadSourceFields()...)
 
 	// Both passes only ever ask "which chunks belong to this document", so the
 	// row shape is identical and only the query differs.
@@ -237,13 +264,19 @@ func (g *GrepAdapter) fetchScoped(
 				}
 			}
 			out = append(out, runtime.RetrievalChunk{
-				ID:           runtime.FirstStringFromMap(raw, "id", "_id"),
-				Content:      content,
-				DocumentID:   runtime.StringFromMap(raw, "doc_id"),
-				DocumentName: runtime.StringFromMap(raw, "docnm_kwd"),
-				DatasetID:    runtime.StringFromMap(raw, "kb_id"),
-				ChunkIndex:   runtime.IntFromMap(raw, "chunk_order_int"),
-				PageNum:      runtime.IntFromMap(raw, "page_num_int"),
+				SourcePath:       runtime.StringFromMap(raw, "source_path_kwd"),
+				StartLine:        runtime.IntFromMap(raw, "start_line_int"),
+				EndLine:          runtime.IntFromMap(raw, "end_line_int"),
+				CodeLanguage:     runtime.StringFromMap(raw, "code_lang_kwd"),
+				ArchiveRunID:     runtime.StringFromMap(raw, "archive_run_kwd"),
+				ArchiveAttemptID: runtime.StringFromMap(raw, "archive_attempt_kwd"),
+				ID:               runtime.FirstStringFromMap(raw, "id", "_id"),
+				Content:          content,
+				DocumentID:       runtime.StringFromMap(raw, "doc_id"),
+				DocumentName:     runtime.StringFromMap(raw, "docnm_kwd"),
+				DatasetID:        runtime.StringFromMap(raw, "kb_id"),
+				ChunkIndex:       runtime.IntFromMap(raw, "chunk_order_int"),
+				PageNum:          runtime.IntFromMap(raw, "page_num_int"),
 			})
 		}
 		sort.SliceStable(out, func(i, j int) bool { return readingOrderLess(out[i], out[j]) })
@@ -264,6 +297,9 @@ func (g *GrepAdapter) fetchScoped(
 			Filter:       filter,
 		})
 		if err == nil {
+			if err := archivepublication.CheckRows(ectx, dao.DB, req.DatasetIDs, res.Chunks); err != nil {
+				return nil, err
+			}
 			return toChunks(res.Chunks), nil
 		}
 		// A cancelled or timed-out run must not pay for a second query against
@@ -308,6 +344,9 @@ func (g *GrepAdapter) fetchScoped(
 			zap.Int("returned", len(res.Chunks)), zap.Int64("total", res.Total),
 			zap.Int("limit", deepReadFetchLimit))
 	}
+	if err := archivepublication.CheckRows(ectx, dao.DB, req.DatasetIDs, res.Chunks); err != nil {
+		return nil, err
+	}
 	return toChunks(res.Chunks), nil
 }
 
@@ -344,6 +383,20 @@ func (g *GrepAdapter) Grep(ctx context.Context, req runtime.GrepRequest) ([]runt
 	// in that case.
 	ectx, ecancel := engineCallContext(ctx)
 	defer ecancel()
+	var visibilityErr error
+	if len(req.DatasetIDs) == 0 && len(req.DocScope) == 0 {
+		filter, visibilityErr = archivepublication.FilterForTenants(ectx, dao.DB, []string{req.TenantID}, filter)
+	} else {
+		filter, visibilityErr = archivepublication.Filter(ectx, dao.DB, req.DatasetIDs, req.DocScope, filter)
+	}
+	if visibilityErr != nil {
+		return nil, visibilityErr
+	}
+	if len(req.SelectFields) == 0 {
+		req.SelectFields = grepChunksSelectFields
+	}
+	req.SelectFields = append(append([]string{}, req.SelectFields...), "doc_id")
+	req.SelectFields = append(req.SelectFields, archivepublication.ReadSourceFields()...)
 
 	// Path 1: native regex pushdown (Elasticsearch, Infinity). With
 	// content_with_weight mapped as a searchable keyword field, native regexp
@@ -361,6 +414,9 @@ func (g *GrepAdapter) Grep(ctx context.Context, req runtime.GrepRequest) ([]runt
 		})
 		if err != nil {
 			return nil, fmt.Errorf("grep: %w — %v.%s", runtime.ErrRegexpPushdown, err, regexpPushdownHint(req.Pattern))
+		}
+		if err := archivepublication.CheckRows(ectx, dao.DB, req.DatasetIDs, res.Chunks); err != nil {
+			return nil, err
 		}
 		return translateGrepChunks(res.Chunks), nil
 	}
@@ -748,13 +804,19 @@ func translateGrepChunks(chunks []map[string]interface{}) []runtime.RetrievalChu
 	out := make([]runtime.RetrievalChunk, 0, len(chunks))
 	for _, raw := range chunks {
 		out = append(out, runtime.RetrievalChunk{
-			ID:           runtime.FirstStringFromMap(raw, "id", "_id"),
-			Content:      contentWithWeightFromRaw(raw),
-			DocumentID:   runtime.StringFromMap(raw, "doc_id"),
-			DocumentName: runtime.StringFromMap(raw, "docnm_kwd"),
-			DatasetID:    runtime.StringFromMap(raw, "kb_id"),
-			ChunkIndex:   runtime.IntFromMap(raw, "chunk_order_int"),
-			PageNum:      runtime.IntFromMap(raw, "page_num_int"),
+			SourcePath:       runtime.StringFromMap(raw, "source_path_kwd"),
+			StartLine:        runtime.IntFromMap(raw, "start_line_int"),
+			EndLine:          runtime.IntFromMap(raw, "end_line_int"),
+			CodeLanguage:     runtime.StringFromMap(raw, "code_lang_kwd"),
+			ArchiveRunID:     runtime.StringFromMap(raw, "archive_run_kwd"),
+			ArchiveAttemptID: runtime.StringFromMap(raw, "archive_attempt_kwd"),
+			ID:               runtime.FirstStringFromMap(raw, "id", "_id"),
+			Content:          contentWithWeightFromRaw(raw),
+			DocumentID:       runtime.StringFromMap(raw, "doc_id"),
+			DocumentName:     runtime.StringFromMap(raw, "docnm_kwd"),
+			DatasetID:        runtime.StringFromMap(raw, "kb_id"),
+			ChunkIndex:       runtime.IntFromMap(raw, "chunk_order_int"),
+			PageNum:          runtime.IntFromMap(raw, "page_num_int"),
 		})
 	}
 	return out
@@ -805,6 +867,14 @@ func containsString(in []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func checkArchiveRetrievalChunks(ctx context.Context, kbIDs []string, chunks []runtime.RetrievalChunk) error {
+	rows := make([]map[string]any, 0, len(chunks))
+	for _, chunk := range chunks {
+		rows = append(rows, map[string]any{"doc_id": chunk.DocumentID, "archive_run_kwd": chunk.ArchiveRunID, "archive_attempt_kwd": chunk.ArchiveAttemptID})
+	}
+	return archivepublication.CheckRows(ctx, dao.DB, kbIDs, rows)
 }
 
 // isGraphChunkContent reports whether a chunk's content looks like a knowledge

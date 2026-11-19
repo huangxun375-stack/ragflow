@@ -19,7 +19,9 @@ package document
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"ragflow/internal/parser/codearchive"
 	"strings"
 
 	"go.uber.org/zap"
@@ -43,7 +45,8 @@ var (
 	// ErrLinkDatasetNotFound mirrors Python "Can't find this dataset!".
 	ErrLinkDatasetNotFound = errors.New("Can't find this dataset!")
 	// ErrLinkInternal is a generic, safe-to-expose internal failure.
-	ErrLinkInternal = errors.New("Internal server error.")
+	ErrLinkInternal           = errors.New("Internal server error.")
+	ErrLinkArchiveUnsupported = fmt.Errorf("%w: use a dataset ZIP upload", &codearchive.Error{Code: "ZIP_ASSOCIATION_UNSUPPORTED"})
 )
 
 // File2DocumentService handles linking files to datasets.
@@ -151,6 +154,9 @@ func (s *File2DocumentService) LinkToDatasets(ctx context.Context, req *LinkToDa
 			_, permissionErr := permissionresponse.Normalize(err)
 			return permissionErr
 		}
+		if utility.IsArchiveFilename(file.Name) || file.Type == string(utility.FileTypeCODE) {
+			return ErrLinkArchiveUnsupported
+		}
 	}
 
 	// ── 5. Validate KB permissions ────────────────────────────────────────────
@@ -187,6 +193,13 @@ func (s *File2DocumentService) convertFiles(ctx context.Context, fileIDs, kbIDs 
 		requestedKBIDs[kbID] = struct{}{}
 	}
 	for _, fileID := range fileIDs {
+		source, err := s.fileDAO.GetByID(ctx, dao.DB, fileID)
+		if err != nil {
+			return err
+		}
+		if source != nil && (utility.IsArchiveFilename(source.Name) || source.Type == string(utility.FileTypeCODE)) {
+			return ErrLinkArchiveUnsupported
+		}
 		mappings, err := s.file2DocumentDAO.GetByFileID(ctx, dao.DB, fileID)
 		if err != nil {
 			common.Warn("convertFiles: GetByFileID failed", zap.String("fileID", fileID), zap.Error(err))

@@ -395,6 +395,7 @@ type grepFakeEngine struct {
 	searchErr         error
 	searchCalls       int
 	lastReq           *enginetypes.SearchRequest
+	lastRegexpReq     *enginetypes.RegexpSearchRequest
 }
 
 func (e *grepFakeEngine) GetType() string { return string(engine.EngineElasticsearch) }
@@ -461,6 +462,7 @@ func keepByKey(chunks []map[string]interface{}, want []string, keys ...string) [
 	return out
 }
 func (e *grepFakeEngine) SearchByRegexp(_ context.Context, req *enginetypes.RegexpSearchRequest) (*enginetypes.SearchResult, error) {
+	e.lastRegexpReq = req
 	if e.searchByRegexpErr != nil {
 		return nil, e.searchByRegexpErr
 	}
@@ -500,6 +502,7 @@ func (e *grepFakeEngine) SearchByRegexp(_ context.Context, req *enginetypes.Rege
 // mapped as a searchable keyword field, a regexp pushdown failure is surfaced as
 // an error (there is intentionally no in-memory RE2 fallback anymore).
 func TestGrepAdapter_NoFallbackOnRegexpError(t *testing.T) {
+	setupArchiveVisibilityTestDB(t)
 	fe := &grepFakeEngine{
 		searchByRegexpErr: fmt.Errorf("elasticsearch regexp error on index \"ragflow_t\": \\b is not supported"),
 	}
@@ -522,6 +525,7 @@ func TestGrepAdapter_NoFallbackOnRegexpError(t *testing.T) {
 // TestGrepAdapter_RegexpPushdownSucceeds asserts the ES pushdown result is used
 // directly when it does not error.
 func TestGrepAdapter_RegexpPushdownSucceeds(t *testing.T) {
+	setupArchiveVisibilityTestDB(t)
 	fe := &grepFakeEngine{
 		regexpChunks: []map[string]interface{}{
 			{"id": "c1", "content_with_weight": "alpha beta", "doc_id": "d1", "docnm_kwd": "doc1", "kb_id": "kb1"},
@@ -598,6 +602,7 @@ func TestIsGraphChunkContent(t *testing.T) {
 // prose of ONE document (single doc_id) in reading order
 // (chunk_index), excludes graph triple chunks, and respects offset/limit.
 func TestListChunks_DeepRead(t *testing.T) {
+	setupArchiveVisibilityTestDB(t)
 	fe := &grepFakeEngine{
 		regexpChunks: []map[string]interface{}{
 			{"id": "c1", "content_with_weight": "帝召大将军何进调兵擒马元义，斩之。", "doc_id": "d1", "docnm_kwd": "doc1", "kb_id": "kb1", "chunk_order_int": float64(2)},
@@ -642,6 +647,7 @@ func TestListChunks_DeepRead(t *testing.T) {
 // single-chunk direct reads at number_neighbors=0, multi-anchor union reads,
 // and loud failures for missing anchors / contract violations.
 func TestListChunks_AnchorNeighbors(t *testing.T) {
+	setupArchiveVisibilityTestDB(t)
 	fe := &grepFakeEngine{
 		regexpChunks: []map[string]interface{}{
 			{"id": "c1", "content_with_weight": "chunk A", "doc_id": "d1", "docnm_kwd": "doc1", "kb_id": "kb1", "chunk_order_int": float64(0)},

@@ -28,6 +28,7 @@ import (
 // Content; Pass 2 (FetchChunksByID) narrows by ids via a term filter and
 // returns full prose, skipping graph payloads.
 func TestListChunksTwoPhase_IndexLightweightFullFetch(t *testing.T) {
+	setupArchiveVisibilityTestDB(t)
 	fe := &grepFakeEngine{
 		regexpChunks: []map[string]interface{}{
 			{"id": "c1", "content_with_weight": "prose one", "doc_id": "d1", "docnm_kwd": "doc1", "kb_id": "kb1", "chunk_order_int": float64(1)},

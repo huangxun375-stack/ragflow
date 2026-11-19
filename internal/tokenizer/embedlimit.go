@@ -507,6 +507,31 @@ func (l Limiter) Trim(text string, maxTokens int) (string, int) {
 	return trimmed, l.counter.Count(trimmed)
 }
 
+// Fits is equivalent to Trim(text, maxTokens) leaving text unchanged, without
+// constructing a truncated prefix for the built-in counters.
+func (l Limiter) Fits(text string, maxTokens int) bool {
+	limit := l.Limit(maxTokens)
+	if l.counter == nil || !l.counter.Available() {
+		return len(text) <= max(0, limit)
+	}
+	if limit <= 0 {
+		return text == ""
+	}
+	switch c := l.counter.(type) {
+	case *sentencePieceCounter:
+		normalized := c.model.normalize(text)
+		// Every Viterbi edge consumes at least one normalized byte; byte
+		// fallback costs exactly its byte span. NFKC can expand input, so
+		// this bound must not be applied to len(text).
+		return len(normalized) <= limit || c.model.countNormalized(normalized, limit) <= limit
+	case cl100kCounter, *wordPieceCounter, *bpeCounter:
+		return c.Count(text) <= limit
+	default:
+		// Registered third-party counters can impose additional trim semantics.
+		return l.counter.TrimToLimit(text, limit) == text
+	}
+}
+
 // trimByBytes is the last-resort bound used when no counter is available.
 func trimByBytes(text string, limit int) string {
 	if limit <= 0 {

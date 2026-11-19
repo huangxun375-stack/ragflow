@@ -175,6 +175,7 @@ func TestEngineService_QueryPages_DegradesEmpty(t *testing.T) {
 }
 
 func TestEngineService_BackfillChunks_ByIDScoped(t *testing.T) {
+	wikiArchiveDB(t)
 	ctx := t.Context()
 	eng := &fakeDocEngine{chunks: map[string]interface{}{
 		"c1": map[string]interface{}{"id": "c1", "content_with_weight": "raw 1", "doc_id": "d1", "docnm_kwd": "D", "kb_id": "kb1"},

@@ -32,14 +32,20 @@ import (
 // Chunk type (with document_id, docnm_kwd, position, etc.) lives in
 // internal/entity and is wired in by the retrieval adapters.
 type RetrievalChunk struct {
-	ID           string
-	Content      string
-	DocumentID   string
-	DocumentName string
-	DatasetID    string
-	ImageID      string
-	URL          string
-	Positions    any
+	SourcePath       string
+	StartLine        int
+	EndLine          int
+	CodeLanguage     string
+	ArchiveRunID     string
+	ArchiveAttemptID string
+	ID               string
+	Content          string
+	DocumentID       string
+	DocumentName     string
+	DatasetID        string
+	ImageID          string
+	URL              string
+	Positions        any
 	// ChunkIndex is the chunk's 0-based reading-order index within its document
 	// (ES `chunk_order_int`). Deep-read tools sort chunks by it so the model reads
 	// a document sequentially rather than in arbitrary match order.

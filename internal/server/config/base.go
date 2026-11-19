@@ -16,7 +16,10 @@
 
 package config
 
-import "ragflow/internal/common"
+import (
+	"ragflow/internal/common"
+	"ragflow/internal/parser/codearchive"
+)
 
 type Config struct {
 	general                 GeneralConfig
@@ -28,6 +31,8 @@ type Config struct {
 	queueEngine             QueueEngineConfig
 	analyticEngine          AnalyticEngineConfig
 	oTel                    OpenTelemetryConfig
+	codeArchive             *codearchive.Policy
+	codeArchiveRetrieval    *CodeArchiveRetrievalConfig
 
 	admin     AdminConfig
 	apiServer APIServerConfig

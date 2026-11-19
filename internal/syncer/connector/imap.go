@@ -595,7 +595,7 @@ func parseIMAPMessage(raw []byte, sizeThreshold int64) (SourceDocument, []Source
 
 	attachmentDocs := make([]SourceDocument, 0, len(attachments))
 	for index, attachment := range attachments {
-		if utility.FilenameType(attachment.filename) == utility.FileTypeOTHER {
+		if utility.FilenameType(attachment.filename) == utility.FileTypeOTHER || utility.IsArchiveContent(attachment.filename, attachment.contentType) {
 			continue
 		}
 		attachmentDocs = append(attachmentDocs, SourceDocument{

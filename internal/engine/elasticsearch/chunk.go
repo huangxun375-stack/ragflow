@@ -900,6 +900,25 @@ func (e *Engine) updateChunksByQuery(ctx context.Context, indexName string, cond
 		bodyBytes, _ := io.ReadAll(res.Body)
 		return fmt.Errorf("elasticsearch update by query error: %s, body: %s", res.Status(), string(bodyBytes))
 	}
+	if condition["archive_run_kwd"] != nil || condition["archive_attempt_kwd"] != nil {
+		// HTTP 200 does not imply that every update succeeded. Archive
+		// publication must wait for all availability writes, including refresh,
+		// before its relational generation pointer becomes visible.
+		var acknowledgement struct {
+			Total            int64      `json:"total"`
+			Updated          int64      `json:"updated"`
+			Noops            int64      `json:"noops"`
+			VersionConflicts int64      `json:"version_conflicts"`
+			TimedOut         bool       `json:"timed_out"`
+			Failures         []struct{} `json:"failures"`
+		}
+		if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&acknowledgement); err != nil {
+			return fmt.Errorf("decode archive availability acknowledgement: %w", err)
+		}
+		if acknowledgement.Total <= 0 || acknowledgement.Updated < 0 || acknowledgement.Noops < 0 || acknowledgement.Updated+acknowledgement.Noops != acknowledgement.Total || acknowledgement.VersionConflicts != 0 || acknowledgement.TimedOut || len(acknowledgement.Failures) > 0 {
+			return fmt.Errorf("incomplete archive availability update: total=%d updated=%d noops=%d conflicts=%d failures=%d timed_out=%t", acknowledgement.Total, acknowledgement.Updated, acknowledgement.Noops, acknowledgement.VersionConflicts, len(acknowledgement.Failures), acknowledgement.TimedOut)
+		}
+	}
 
 	common.Debug("ElasticsearchConnection.updateChunksByQuery completed", zap.String("indexName", indexName))
 	return nil
@@ -2245,7 +2264,11 @@ func buildBoolQueryFromConditionRaw(filter map[string]interface{}, kbIDs []strin
 		if k == "and" || k == "or" {
 			var children []interface{}
 			for _, child := range types.FilterClauses(v) {
-				children = append(children, buildBoolQueryFromConditionRaw(child, nil, false, isMemoryIndex))
+				query := buildBoolQueryFromConditionRaw(child, nil, false, isMemoryIndex)
+				if query == nil {
+					query = map[string]interface{}{"match_all": map[string]interface{}{}}
+				}
+				children = append(children, query)
 			}
 			if len(children) > 0 {
 				clause := map[string]interface{}{"filter": children}
@@ -2253,6 +2276,8 @@ func buildBoolQueryFromConditionRaw(filter map[string]interface{}, kbIDs []strin
 					clause = map[string]interface{}{"should": children, "minimum_should_match": 1}
 				}
 				filterClauses = append(filterClauses, map[string]interface{}{"bool": clause})
+			} else if k == "or" {
+				filterClauses = append(filterClauses, map[string]interface{}{"match_none": map[string]interface{}{}})
 			}
 			continue
 		}
@@ -2303,8 +2328,16 @@ func buildBoolQueryFromConditionRaw(filter map[string]interface{}, kbIDs []strin
 			continue
 		}
 		if k == "must_not" {
-			for _, clause := range mustNotExistsClauses(v) {
-				mustNotClauses = append(mustNotClauses, clause)
+			if child, ok := v.(map[string]interface{}); ok {
+				if field, exists := child["exists"]; exists && len(child) == 1 {
+					mustNotClauses = append(mustNotClauses, map[string]interface{}{"exists": map[string]interface{}{"field": field}})
+					continue
+				}
+				query := buildBoolQueryFromConditionRaw(child, nil, false, isMemoryIndex)
+				if query == nil {
+					query = map[string]interface{}{"match_all": map[string]interface{}{}}
+				}
+				mustNotClauses = append(mustNotClauses, query)
 			}
 			continue
 		}

@@ -28,6 +28,7 @@ import (
 	"net/url"
 	"ragflow/internal/common"
 	"ragflow/internal/entity"
+	"ragflow/internal/parser/codearchive"
 	"ragflow/internal/permission"
 	"ragflow/internal/utility"
 	"reflect"
@@ -40,6 +41,7 @@ import (
 
 	"ragflow/internal/dao"
 	"ragflow/internal/service"
+	"ragflow/internal/service/archivepublication"
 	"ragflow/internal/service/billing"
 	"ragflow/internal/service/dataset"
 	"ragflow/internal/service/document"
@@ -71,7 +73,7 @@ type documentServiceIface interface {
 	GetDocumentMetadataByID(ctx context.Context, docID string) (map[string]interface{}, error)
 	GetDocumentArtifact(ctx context.Context, filename string) (*document.ArtifactResponse, error)
 	GetDocumentPreview(ctx context.Context, docID string) (*document.DocumentPreview, error)
-	UploadLocalDocuments(ctx context.Context, kb *entity.Knowledgebase, files []*multipart.FileHeader, parentPath string, parserConfigOverride map[string]interface{}) ([]map[string]interface{}, []string)
+	UploadLocalDocuments(ctx context.Context, kb *entity.Knowledgebase, files []*multipart.FileHeader, parentPath string, parserConfigOverride map[string]interface{}) ([]map[string]interface{}, []document.UploadFailure)
 	UploadWebDocument(ctx context.Context, kb *entity.Knowledgebase, name, url string) (map[string]interface{}, common.ErrorCode, error)
 	UploadEmptyDocument(ctx context.Context, kb *entity.Knowledgebase, name string) (map[string]interface{}, common.ErrorCode, error)
 	DownloadDocument(ctx context.Context, datasetID, docID string) (*document.DownloadDocumentResp, error)
@@ -675,6 +677,17 @@ func (h *DocumentHandler) ListDocuments(c *gin.Context) {
 	}
 
 	docs := make([]map[string]interface{}, 0, len(documents))
+	archiveIDs := []string{}
+	for _, doc := range documents {
+		if doc.ParserID == "code_archive" {
+			archiveIDs = append(archiveIDs, doc.ID)
+		}
+	}
+	archiveMetadata, archiveErr := archivepublication.Metadata(ctx, dao.DB, archiveIDs)
+	if archiveErr != nil {
+		common.RespondError(c, common.CodeServerError, "failed to load archive metadata")
+		return
+	}
 	runIDs := make([]string, 0, len(documents))
 	for _, doc := range documents {
 		if doc != nil && doc.PipelineLogID != nil && *doc.PipelineLogID != "" {
@@ -706,7 +719,11 @@ func (h *DocumentHandler) ListDocuments(c *gin.Context) {
 		if doc.PipelineLogID != nil {
 			latestEvent = latestEventsByRun[*doc.PipelineLogID]
 		}
-		docs = append(docs, mapDocumentListItem(doc, metaFields, latestEvent))
+		item := mapDocumentListItem(doc, metaFields, latestEvent)
+		if doc.ParserID == "code_archive" {
+			document.ArchiveMetadataFor(archiveMetadata[doc.ID]).AddTo(item)
+		}
+		docs = append(docs, item)
 	}
 
 	hasActiveTasks, err := h.documentService.HasActiveIngestionTasks(ctx, datasetID)
@@ -1053,15 +1070,14 @@ func (h *DocumentHandler) uploadLocalDocuments(c *gin.Context, kb *entity.Knowle
 		}
 	}
 
-	// Optional parser_config override — only the allow-listed table column keys.
-	// Python ignores malformed or non-object input here instead of failing the
-	// whole upload request.
+	// Ordinary uploads retain their table overrides. ZIP uploads accept only the
+	// fixed archive node and validate the full submitted object below.
 	var override map[string]interface{}
 	if raw := strings.TrimSpace(c.PostForm("parser_config")); raw != "" {
 		var parsed map[string]interface{}
 		if err = json.Unmarshal([]byte(raw), &parsed); err == nil && parsed != nil {
 			override = map[string]interface{}{}
-			for _, k := range []string{"table_column_mode", "table_column_roles"} {
+			for _, k := range []string{"table_column_mode", "table_column_roles", "CodeArchive:Archive"} {
 				if v, ok := parsed[k]; ok {
 					override[k] = v
 				}
@@ -1071,10 +1087,42 @@ func (h *DocumentHandler) uploadLocalDocuments(c *gin.Context, kb *entity.Knowle
 			}
 		}
 	}
+	for _, fh := range files {
+		if utility.IsArchiveFilename(fh.Filename) {
+			var requested map[string]any
+			raw := strings.TrimSpace(c.PostForm("parser_config"))
+			if raw != "" {
+				if err := json.Unmarshal([]byte(raw), &requested); err != nil || requested == nil {
+					respondArchiveError(c, common.CodeDataError, &codearchive.Error{Code: "ZIP_CONFIG_INVALID"})
+					return
+				}
+				if err := service.ValidateCodeArchiveConfig(requested); err != nil {
+					respondArchiveError(c, common.CodeDataError, err)
+					return
+				}
+			}
+		}
+	}
 	ctx := c.Request.Context()
-	data, errMsgs := h.documentService.UploadLocalDocuments(ctx, kb, files, c.PostForm("parent_path"), override)
-	if len(errMsgs) > 0 {
-		common.RespondError(c, common.CodeServerError, strings.Join(errMsgs, "\n"))
+	data, failures := h.documentService.UploadLocalDocuments(ctx, kb, files, c.PostForm("parent_path"), override)
+	if len(failures) > 0 {
+		if len(files) == 1 && codearchive.IsArchive(files[0].Filename) {
+			respondArchiveError(c, failures[0].Code, failures[0])
+			return
+		}
+		code := common.CodeServerError
+		messages := make([]string, 0, len(failures))
+		for _, failure := range failures {
+			if failure.Code == common.CodeDataError {
+				code = common.CodeDataError
+			}
+			message := failure.Error()
+			if failure.Archive {
+				message = codearchive.Reason(failure)
+			}
+			messages = append(messages, message)
+		}
+		common.RespondError(c, code, strings.Join(messages, "\n"))
 		return
 	}
 	if len(data) == 0 {
@@ -1166,7 +1214,7 @@ func mapDocKeysWithRunStatus(raw map[string]interface{}) map[string]interface{} 
 		"parser_id":        raw["parser_id"],
 		"ingestion_status": ingestionStatus,
 	}
-	for _, k := range []string{"id", "name", "type", "size", "suffix", "source_type", "created_by", "parser_config", "location", "pipeline_id", "content_hash"} {
+	for _, k := range []string{"id", "name", "type", "size", "suffix", "source_type", "created_by", "parser_config", "location", "pipeline_id", "pipeline_version_id", "content_hash", "archive_status", "archive_run_id", "archive_failure_reason"} {
 		if v, ok := raw[k]; ok {
 			out[k] = v
 		}
@@ -1689,6 +1737,7 @@ func (h *DocumentHandler) UpdateDatasetDocument(c *gin.Context) {
 	}
 	if present["parser_config"] && req.ParserConfig != nil {
 		dropped, err := dataset.ValidateDocumentParserConfig(req.ParserConfig)
+		req.UnscopedParserConfigKeys = dropped
 		if len(dropped) > 0 {
 			common.Warn("dropping unscoped (flat) parser_config keys; keys must be component-scoped (contain ':')",
 				zap.Strings("keys", dropped),
@@ -1705,6 +1754,11 @@ func (h *DocumentHandler) UpdateDatasetDocument(c *gin.Context) {
 	ctx := c.Request.Context()
 	data, code, err := h.documentService.UpdateDatasetDocument(ctx, datasetID, documentID, &req, present)
 	if err != nil {
+		var archiveErr *codearchive.Error
+		if errors.As(err, &archiveErr) {
+			respondArchiveError(c, code, err)
+			return
+		}
 		common.RespondError(c, code, err.Error())
 		return
 	}

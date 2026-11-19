@@ -20,6 +20,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"gorm.io/gorm"
+	"ragflow/internal/permission"
 	"runtime"
 	"strings"
 	"sync"
@@ -30,10 +32,13 @@ import (
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
 	"ragflow/internal/ingestion"
+	"ragflow/internal/ingestion/archiveartifact"
 	"ragflow/internal/ingestion/knowledge_compile"
 	pipelinepkg "ragflow/internal/ingestion/pipeline"
 	taskpkg "ragflow/internal/ingestion/task"
+	"ragflow/internal/parser/codearchive"
 	servicepkg "ragflow/internal/service"
+	"ragflow/internal/service/archivepublication"
 	documentpkg "ragflow/internal/service/document"
 	"ragflow/internal/utility"
 
@@ -112,8 +117,11 @@ type Ingestor struct {
 	kcEmbedding      string
 	kcConcurrency    int32 // number of parallel dataset-level compile workers
 
-	compileWg         sync.WaitGroup
-	memoryReconcileWg sync.WaitGroup
+	compileWg              sync.WaitGroup
+	memoryReconcileWg      sync.WaitGroup
+	archiveCleanupWg       sync.WaitGroup
+	archiveCleanupInterval time.Duration
+	archiveCleanupOptions  archivepublication.CleanupOptions
 
 	// runDocumentTask dispatches to the migrated task handler path.
 	// Tests may override this to verify branch routing without invoking
@@ -255,6 +263,7 @@ func (e *Ingestor) start() error {
 	// these off rather than blocking on the consume loop itself.
 	e.startWorkerPool()
 	e.startMemoryTaskReconciler()
+	e.startArchiveCleanup()
 	e.startDatasetKnowledgeCompile()
 
 	// Run the main tasks.RAGFLOW dispatcher off the caller's goroutine so Start
@@ -547,7 +556,7 @@ func (e *Ingestor) handleAndExecute(handle common.TaskHandle) {
 			var identityErr *servicepkg.InvalidRunIdentityError
 			if errors.As(validateErr, &identityErr) {
 				common.Error(fmt.Sprintf("task %s has permanent run identity error: %s", task.ID, identityErr.Reason), validateErr)
-				if e.markFailed(e.ctx, task.ID, fmt.Sprintf("Task rejected: invalid run identity (%s).", identityErr.Reason)) {
+				if e.markFailed(e.ctx, task.ID, fmt.Errorf("Task rejected: invalid run identity (%s).", identityErr.Reason)) {
 					e.recordTerminalPipelineLog(e.ctx, task, string(entity.TaskStatusFail), fmt.Sprintf("Task rejected: invalid run identity (%s).", identityErr.Reason))
 					e.ackHandle(hb, handle, taskMessage.TaskID)
 				} else {
@@ -569,16 +578,27 @@ func (e *Ingestor) handleAndExecute(handle common.TaskHandle) {
 		// Claim the task before applying document/log side effects. A duplicate
 		// delivery must only renew its broker lease; resetting the document here
 		// would race the owning worker and erase its in-flight progress.
-		e.ingestionTaskSvc.PrepareValidatedRun(e.ctx, task)
 	default:
 		common.Warn(fmt.Sprintf("task %s in unexpected status %s, ack-skip", taskMessage.TaskID, task.Status))
 		e.ackHandle(hb, handle, taskMessage.TaskID)
 		return
 	}
 
-	taskCtx := taskpkg.NewTaskContextForScheduling(e.ctx, task)
+	runCtx, releaseAttempt, err := e.claimArchiveAttempt(e.ctx, task)
+	if err != nil {
+		e.releaseTask(task.ID)
+		if errors.Is(err, archivepublication.ErrLeaseHeld) {
+			e.renewDuplicateHandle(hb, handle, task.ID)
+		} else {
+			e.nackHandle(hb, handle, task.ID)
+		}
+		return
+	}
+	defer releaseAttempt()
+	e.ingestionTaskSvc.PrepareValidatedRun(runCtx, task)
+	taskCtx := taskpkg.NewTaskContextForScheduling(runCtx, task)
 	taskCtx.Handle = handle
-	e.executeTaskWithHeartbeat(e.ctx, taskCtx, hb)
+	e.executeTaskWithHeartbeat(runCtx, taskCtx, hb)
 }
 
 func (e *Ingestor) ackHandle(hb *Heartbeat, handle common.TaskHandle, taskID string) {
@@ -820,10 +840,10 @@ func (e *Ingestor) markStopped(ctx context.Context, taskID string) bool {
 // The caller's context is detached before touching the DB (see markStopped):
 // failure paths usually carry an already-cancelled context, and losing the
 // FAILED write would turn a settled task into a redelivery loop.
-func (e *Ingestor) markFailed(ctx context.Context, taskID, reason string) bool {
+func (e *Ingestor) markFailed(ctx context.Context, taskID string, cause error) bool {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	if uErr := e.ingestionTaskSvc.MarkFailed(ctx, taskID, reason); uErr != nil {
+	if uErr := e.ingestionTaskSvc.MarkFailed(ctx, taskID, cause); uErr != nil {
 		common.Error(fmt.Sprintf("Failed to set task %s to FAILED", taskID), uErr)
 		return false
 	}
@@ -836,15 +856,22 @@ func (e *Ingestor) markFailed(ctx context.Context, taskID, reason string) bool {
 func (e *Ingestor) runTask(ctx context.Context, task *entity.IngestionTask) bool {
 	select {
 	case <-ctx.Done():
-		if e.ctx.Err() != nil || e.dispatchCtx.Err() != nil {
+		if scope, archive := archiveartifact.ScopeFrom(ctx); archive {
+			checkCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			current, err := e.ingestionTaskSvc.GetTask(checkCtx, task.ID)
+			cancel()
+			if err != nil || current.PipelineLogID == nil || *current.PipelineLogID != scope.RunID || current.Status != common.STOPPING {
+				return false
+			}
+		} else if e.ctx.Err() != nil || e.dispatchCtx.Err() != nil {
 			common.Info(fmt.Sprintf("Task %s aborted due to ingestor shutdown, leaving for redelivery", task.ID))
 			return false
 		}
 		common.Info(fmt.Sprintf("Task %s cancelled", task.ID))
-		e.markTerminalProgress(task)
-		stopped := e.markStopped(context.Background(), task.ID)
+		e.markTerminalProgress(ctx, task)
+		stopped := e.markStopped(ctx, task.ID)
 		if stopped {
-			e.recordTerminalPipelineLog(context.Background(), task, string(entity.TaskStatusCancel), "Task stopped by user.")
+			e.recordTerminalPipelineLog(ctx, task, string(entity.TaskStatusCancel), "Task stopped by user.")
 		}
 		return stopped
 	default:
@@ -865,6 +892,30 @@ func (e *Ingestor) runTask(ctx context.Context, task *entity.IngestionTask) bool
 	}
 
 	if err := e.runDocumentTask(ctx, task); err != nil {
+		if scope, ok := archiveartifact.ScopeFrom(ctx); ok {
+			checkCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			completed := archivepublication.Completed(checkCtx, e.deps.DB, scope) == nil
+			cancel()
+			if completed {
+				e.recordTerminalPipelineLog(ctx, task, string(entity.TaskStatusDone), "Task completed.")
+				return true
+			}
+			currentCtx, currentCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			current, getErr := e.ingestionTaskSvc.GetTask(currentCtx, task.ID)
+			currentCancel()
+			if getErr == nil && current.PipelineLogID != nil && *current.PipelineLogID == scope.RunID && current.Status == common.STOPPING {
+				stopped := e.markStopped(ctx, task.ID)
+				if stopped {
+					e.recordTerminalPipelineLog(ctx, task, string(entity.TaskStatusCancel), "Task stopped by user.")
+				}
+				return stopped
+			}
+			if errors.Is(err, archivepublication.ErrSuperseded) || errors.Is(err, context.Canceled) {
+				// Without a persisted stop request, cancellation is an interrupted
+				// attempt (shutdown or lease loss), not a user-requested terminal run.
+				return false
+			}
+		}
 		e.clearPendingCompileEvent(task.ID)
 		if errors.Is(err, context.Canceled) {
 			if e.ctx.Err() != nil || e.dispatchCtx.Err() != nil {
@@ -872,7 +923,7 @@ func (e *Ingestor) runTask(ctx context.Context, task *entity.IngestionTask) bool
 				return false
 			}
 			common.Info(fmt.Sprintf("Task %s cancelled during pipeline", task.ID))
-			e.markTerminalProgress(task)
+			e.markTerminalProgress(ctx, task)
 			stopped := e.markStopped(ctx, task.ID)
 			if stopped {
 				e.recordTerminalPipelineLog(ctx, task, string(entity.TaskStatusCancel), "Task stopped by user.")
@@ -881,15 +932,15 @@ func (e *Ingestor) runTask(ctx context.Context, task *entity.IngestionTask) bool
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			common.Info(fmt.Sprintf("Task %s timed out during pipeline", task.ID))
-			e.markTerminalProgress(task)
-			ok := e.markFailed(ctx, task.ID, "Task timed out.")
+			e.markTerminalProgress(ctx, task)
+			ok := e.markFailed(ctx, task.ID, fmt.Errorf("Task timed out: %w", err))
 			if ok {
 				e.recordTerminalPipelineLog(ctx, task, string(entity.TaskStatusFail), "Task timed out.")
 			}
 			return ok
 		}
 		common.Error(fmt.Sprintf("Task %s failed", task.ID), err)
-		ok := e.markFailed(ctx, task.ID, fmt.Sprintf("Task failed: %v", err))
+		ok := e.markFailed(ctx, task.ID, fmt.Errorf("Task failed: %w", err))
 		if ok {
 			e.recordTerminalPipelineLog(ctx, task, string(entity.TaskStatusFail), fmt.Sprintf("Task failed: %v", err))
 		}
@@ -910,11 +961,11 @@ func (e *Ingestor) runTask(ctx context.Context, task *entity.IngestionTask) bool
 // markTerminalProgress preserves the numeric document state used by existing
 // status projections without rewriting the legacy progress_msg column. The
 // human-readable explanation is written as a run-scoped terminal event.
-func (e *Ingestor) markTerminalProgress(task *entity.IngestionTask) {
+func (e *Ingestor) markTerminalProgress(baseCtx context.Context, task *entity.IngestionTask) {
 	if task == nil || task.DocumentID == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(e.ctx), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(baseCtx), 5*time.Second)
 	defer cancel()
 	if err := documentpkg.NewDocumentService().UpdateRunState(ctx, task.DocumentID, -1); err != nil {
 		common.Warn(fmt.Sprintf("mark terminal progress for document %s: %v", task.DocumentID, err))
@@ -1019,7 +1070,7 @@ func (e *Ingestor) settleMessage(ctx context.Context, taskCtx *taskpkg.TaskConte
 					}
 				}()
 				common.Error(fmt.Sprintf("task %s panicked: %v", taskID, r), fmt.Errorf("%v", r))
-				e.markFailed(ctx, taskID, fmt.Sprintf("Task panicked: %v", r))
+				e.markFailed(ctx, taskID, fmt.Errorf("Task panicked: %v", r))
 				e.recordTerminalPipelineLog(ctx, task, string(entity.TaskStatusFail), fmt.Sprintf("Task panicked: %v", r))
 			}()
 			terminal = false
@@ -1251,7 +1302,46 @@ func (e *Ingestor) defaultRunDocumentTask(ctx context.Context, ingestionTask *en
 	result, err := executor.WithProgressSink(sink).Execute(docTaskCtx.Ctx)
 	sink.Close()
 	if err != nil {
+		if _, archive := archiveartifact.ScopeFrom(ctx); archive {
+			return errors.Join(err, executor.CompensateArchive(ctx, err))
+		}
 		return err
+	}
+	if scope, ok := archiveartifact.ScopeFrom(ctx); ok {
+		if result == nil || result.ArchiveArtifact == nil {
+			return fmt.Errorf("archive pipeline produced no artifact")
+		}
+		// A failed acknowledgement can hide a committed publication. Cleanup
+		// must obtain a fresh transactional revocation before touching its rows.
+		publishErr := archivepublication.Publish(ctx, e.deps.DB, scope, *result.ArchiveArtifact, archivepublication.Counts{Chunks: result.ChunkCount, Tokens: result.TokenConsumption, Duration: result.Duration, ValidateEmbedding: func(checkCtx context.Context, tx *gorm.DB) error {
+			snapshot, err := archivepublication.LoadSnapshot(checkCtx, tx, scope)
+			if err != nil {
+				return err
+			}
+			_, identity, err := servicepkg.ArchiveEmbeddingModel(permission.WithTenantID(checkCtx, docTaskCtx.Tenant.ID), tx, snapshot.Embedding.Reference)
+			if err != nil {
+				return err
+			}
+			if identity != snapshot.Embedding {
+				return fmt.Errorf("%w: embedding model parameters changed; start a new run", &codearchive.Error{Code: "ZIP_EMBEDDING_CHANGED"})
+			}
+			return nil
+		}}, func(syncCtx context.Context, enabled bool) error {
+			if e.deps.Engine == nil {
+				return fmt.Errorf("archive publication requires an index engine")
+			}
+			syncCtx, cancel := context.WithTimeout(syncCtx, 30*time.Second)
+			defer cancel()
+			available := 0
+			if enabled {
+				available = 1
+			}
+			return e.deps.Engine.UpdateChunks(syncCtx, map[string]any{"doc_id": scope.DocID, "archive_run_kwd": scope.RunID, "archive_attempt_kwd": scope.AttemptID}, map[string]any{"available_int": available}, fmt.Sprintf("ragflow_%s", docTaskCtx.Tenant.ID), scope.KBID)
+		})
+		if publishErr != nil {
+			return errors.Join(publishErr, executor.CompensateArchive(ctx, publishErr))
+		}
+		return nil
 	}
 	e.stagePendingCompileEvent(ingestionTask.ID, docTaskCtx.Tenant.ID, result)
 	e.docState.apply(ctx, result)
@@ -1354,6 +1444,7 @@ func (e *Ingestor) Stop(ctx context.Context) {
 		e.workerWg.Wait()
 		e.compileWg.Wait()
 		e.memoryReconcileWg.Wait()
+		e.archiveCleanupWg.Wait()
 		close(waitDone)
 	}()
 

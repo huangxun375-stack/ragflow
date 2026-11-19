@@ -169,6 +169,16 @@ func (s *DocumentService) applyKnowledgebaseParserConfig(ctx context.Context, do
 	if doc == nil || kb == nil {
 		return fmt.Errorf("apply dataset parser config: document and dataset are required")
 	}
+	if isArchiveDocument(doc) {
+		config := codeArchiveConfig(doc.ParserConfig, kb.ParserConfig)
+		if err := s.documentDAO.UpdateByID(ctx, dao.DB, doc.ID, map[string]any{
+			"parser_id": "code_archive", "pipeline_id": nil, "pipeline_version_id": nil, "parser_config": config,
+		}); err != nil {
+			return err
+		}
+		doc.ParserID, doc.PipelineID, doc.PipelineVersionID, doc.ParserConfig = "code_archive", nil, nil, config
+		return nil
+	}
 
 	merged := deepCopyJSONMap(doc.ParserConfig)
 	if merged == nil {
@@ -796,6 +806,9 @@ func firstStringField(m map[string]interface{}, keys ...string) string {
 }
 
 func (s *DocumentService) updateDocumentStatusOnly(ctx context.Context, doc *entity.Document, kb *entity.Knowledgebase, status int) error {
+	if isArchiveDocument(doc) {
+		return s.setArchiveDocumentStatus(ctx, doc, kb, status)
+	}
 	statusStr := strconv.Itoa(status)
 	if doc.Status != nil && *doc.Status == statusStr {
 		return nil

@@ -5016,6 +5016,7 @@ func chunksFormat(chunksRaw []map[string]interface{}) []map[string]interface{} {
 			"doc_type":          getChunkValue(chunk, "doc_type_kwd", "doc_type"),
 			"document_metadata": chunk["document_metadata"],
 		}
+		copyArchiveCitationFields(formatted, chunk)
 		result = append(result, formatted)
 	}
 	return result

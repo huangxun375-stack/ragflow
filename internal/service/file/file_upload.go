@@ -9,6 +9,7 @@ import (
 	"ragflow/internal/common"
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
+	"ragflow/internal/parser/codearchive"
 	"ragflow/internal/permission"
 	"ragflow/internal/storage"
 	"ragflow/internal/utility"
@@ -209,6 +210,9 @@ func (s *FileService) UploadInfos(ctx context.Context, files []*multipart.FileHe
 		if err := s.checkUploadInfoHealth(ctx, filename); err != nil {
 			return nil, err
 		}
+		if utility.IsArchiveContent(filename, fileHeader.Header.Get("Content-Type")) {
+			return nil, fmt.Errorf("%w: use a dataset ZIP upload", &codearchive.Error{Code: "ZIP_ATTACHMENT_UNSUPPORTED"})
+		}
 		src, err := fileHeader.Open()
 		if err != nil {
 			return nil, fmt.Errorf("failed to open uploaded file: %w", err)
@@ -307,6 +311,9 @@ func (s *FileService) checkUploadInfoHealth(ctx context.Context, filename string
 // validateUploadInfoFilename enforces the stored name limit after any
 // content-derived extension has been added.
 func validateUploadInfoFilename(filename string) error {
+	if utility.IsArchiveFilename(filename) {
+		return fmt.Errorf("%w: use a dataset ZIP upload", &codearchive.Error{Code: "ZIP_ATTACHMENT_UNSUPPORTED"})
+	}
 	if err := common.ValidateNameRunes(filename, common.NameLimit255); err != nil {
 		return fmt.Errorf("exceed the maximum length of file name")
 	}
@@ -314,6 +321,9 @@ func validateUploadInfoFilename(filename string) error {
 }
 
 func (s *FileService) storeUploadInfoBlob(ctx context.Context, storageImpl storage.Storage, filename, contentType string, data []byte) (map[string]interface{}, error) {
+	if utility.IsArchiveContent(filename, contentType) {
+		return nil, fmt.Errorf("%w: use a dataset ZIP upload", &codearchive.Error{Code: "ZIP_ATTACHMENT_UNSUPPORTED"})
+	}
 	userID := permission.UserIDFromContext(ctx)
 	location := common.GenerateUUID()
 	bucket := fmt.Sprintf("%s-downloads", userID)

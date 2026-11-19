@@ -86,6 +86,8 @@ type sentencePieceModel struct {
 
 	normalizerName string
 	hasCharmap     bool
+
+	countMemo tokenCountMemo
 }
 
 type spmPiece struct {
@@ -357,74 +359,32 @@ func (m *sentencePieceModel) normalize(text string) string {
 	if text == "" {
 		return ""
 	}
-	s := collapseSpaces(normalizerLite(norm.NFKC.String(text)))
-	if s == "" {
-		// Everything the charmap deletes (e.g. a text of nothing but control
-		// characters) leaves nothing for the dummy prefix to attach to. Emitting a
-		// bare "▁" here would bill one token for text the model sees as empty.
-		return ""
-	}
-	const space = '\u2581' // ▁
+	s := norm.NFKC.String(text)
+	const space = '\u2581'
 	var b strings.Builder
 	b.Grow(len(s) + 2)
-	b.WriteRune(space)
-	prevSpace := false
-	for i, r := range s {
-		if unicode.IsSpace(r) {
-			// A leading whitespace run is absorbed by the dummy prefix.
-			if prevSpace || i == 0 {
-				prevSpace = true
-				continue
+	started, prevSpace := false, false
+	for _, r := range s {
+		if isDeletedByCharmap(r) {
+			continue
+		}
+		if !started {
+			// A deleted-only input must remain empty; leading whitespace is
+			// absorbed by the prefix, but trailing whitespace is retained.
+			b.WriteRune(space)
+			started, prevSpace = true, true
+		}
+		if isCharmapSpace(r) || unicode.IsSpace(r) {
+			if !prevSpace {
+				b.WriteRune(space)
 			}
 			prevSpace = true
-			b.WriteRune(space)
 			continue
 		}
 		prevSpace = false
 		b.WriteRune(r)
 	}
 	return b.String()
-}
-
-// normalizerLite applies the part of the model's precompiled `nmt_nfkc` charmap
-// that NFKC does not cover, so the counter does not spend tokens on characters the
-// served tokenizer deletes or turns into whitespace.
-//
-// The rules below are the ones scripts/gen_tokenizer_oracle.py exercises, each
-// verified individually against the model (probe -> what bge-m3 does):
-//
-//	U+0001..U+0008, U+000B, U+000C, U+000E..U+001F  deleted
-//	U+007F..U+0084, U+0086..U+009F                  deleted (0x85 is NOT deleted)
-//	U+200B..U+200D, U+FEFF                          become a space
-//	U+2581 (the escaped space itself)               becomes a space
-//	U+0000, U+0085, U+2060                          kept, each as its own token
-//
-// This is deliberately a subset: the real charmap is a 232 KB Darts trie with
-// hundreds of rules. What is not implemented here is unusual by construction - the
-// probe above is what keeps this honest, and the ingest path additionally checks
-// its counting against the provider's reported usage (Calibration.ObserveUsage)
-// and shrinks-and-retries if a request is rejected anyway.
-func normalizerLite(s string) string {
-	if !strings.ContainsFunc(s, func(r rune) bool { return isCharmapSpecial(r) }) {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		switch {
-		case isDeletedByCharmap(r):
-			continue
-		case isCharmapSpace(r):
-			b.WriteRune(' ')
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
-
-func isCharmapSpecial(r rune) bool {
-	return isDeletedByCharmap(r) || isCharmapSpace(r)
 }
 
 // isCharmapSpace reports the characters nmt_nfkc maps to a plain space rather than
@@ -457,31 +417,6 @@ func isDeletedByCharmap(r rune) bool {
 	}
 }
 
-// collapseSpaces collapses runs of two or more spaces into one, mirroring the
-// tokenizer's Replace(Regex(" {2,}"), " ") normalizer step. Other whitespace is
-// left untouched.
-func collapseSpaces(s string) string {
-	if !strings.Contains(s, "  ") {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	prevSpace := false
-	for _, r := range s {
-		if r == ' ' {
-			if prevSpace {
-				continue
-			}
-			prevSpace = true
-			b.WriteRune(r)
-			continue
-		}
-		prevSpace = false
-		b.WriteRune(r)
-	}
-	return b.String()
-}
-
 // countTokens is the Unigram Viterbi count over the normalized text: the number
 // of pieces in the highest-scoring segmentation.
 func (m *sentencePieceModel) countTokens(text string) int {
@@ -489,10 +424,29 @@ func (m *sentencePieceModel) countTokens(text string) int {
 	if s == "" {
 		return 0
 	}
+	return m.countNormalized(s, math.MaxInt)
+}
+
+// Only complete pre-tokens can be accumulated or rejected early: Viterbi's
+// best path inside one pre-token can change when more bytes arrive.
+func (m *sentencePieceModel) countNormalized(s string, limit int) int {
 	total := 0
-	for _, chunk := range splitPreTokens(s) {
-		n, _ := m.viterbi(chunk, false)
+	for start := 0; start < len(s); {
+		end := len(s)
+		if next := strings.Index(s[start+len(string(preTokenSpace)):], string(preTokenSpace)); next >= 0 {
+			end = start + len(string(preTokenSpace)) + next
+		}
+		chunk := s[start:end]
+		n, ok := m.countMemo.get(chunk)
+		if !ok {
+			n, _ = m.viterbi(chunk, false)
+			m.countMemo.put(chunk, n)
+		}
 		total += n
+		if total > limit {
+			return total
+		}
+		start = end
 	}
 	return total
 }
@@ -595,6 +549,13 @@ const (
 	spmViterbiByteRun int32 = -2 // one <0xXX> piece per byte of the rune
 )
 
+type spmWork struct {
+	best  []float64
+	count []int
+}
+
+var spmWorkPool = sync.Pool{New: func() any { return &spmWork{} }}
+
 // viterbi runs Unigram's Viterbi over s, returning the best token count and, when
 // wantIDs is set, the chosen piece ids.
 //
@@ -613,8 +574,19 @@ func (m *sentencePieceModel) viterbi(s string, wantIDs bool) (int, []int32) {
 	// "a"s, where "▁a"+"a"+19×"aaaaa"+"aab" and "▁a"+2×"aaaaa"+"a"+... score the
 	// same; counting is unaffected, but a token-level comparison sees it.
 	const spmNegInf float64 = -math.MaxFloat64
-	best := make([]float64, n+1)
-	count := make([]int, n+1)
+	work := spmWorkPool.Get().(*spmWork)
+	defer func() {
+		// Do not let one unbroken megabyte-long identifier pin large buffers.
+		if cap(work.best) <= 64<<10 {
+			spmWorkPool.Put(work)
+		}
+	}()
+	if cap(work.best) < n+1 {
+		work.best = make([]float64, n+1)
+		work.count = make([]int, n+1)
+	}
+	best, count := work.best[:n+1], work.count[:n+1]
+	clear(count)
 	var prev, pieceAt []int32
 	if wantIDs {
 		prev = make([]int32, n+1)
@@ -735,17 +707,26 @@ func (m *sentencePieceModel) trimToLimit(text string, limit int) string {
 	if m.countTokens(text) <= limit {
 		return text
 	}
-	runes := []rune(text)
-	lo, hi := 0, len(runes)
+	// Keep rune-index binary probes, including malformed UTF-8's
+	// replacement semantics, without constructing every candidate prefix.
+	if !utf8.ValidString(text) {
+		text = string([]rune(text))
+	}
+	offsets := make([]int, 0, utf8.RuneCountInString(text)+1)
+	for at := range text {
+		offsets = append(offsets, at)
+	}
+	offsets = append(offsets, len(text))
+	lo, hi := 0, len(offsets)-1
 	for lo < hi {
 		mid := (lo + hi + 1) / 2
-		if m.countTokens(string(runes[:mid])) <= limit {
+		if m.countTokens(text[:offsets[mid]]) <= limit {
 			lo = mid
 		} else {
 			hi = mid - 1
 		}
 	}
-	return string(runes[:lo])
+	return text[:offsets[lo]]
 }
 
 // sentencePieceCounter adapts a parsed model to the Counter interface.

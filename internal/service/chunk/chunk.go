@@ -31,9 +31,11 @@ import (
 	"ragflow/internal/common"
 	"ragflow/internal/entity"
 	"ragflow/internal/entity/models"
+	"ragflow/internal/parser/codearchive"
 	"ragflow/internal/permission"
 	permissionresponse "ragflow/internal/permission/response"
 	"ragflow/internal/service"
+	"ragflow/internal/service/archivepublication"
 	"strings"
 	"sync"
 	"time"
@@ -445,6 +447,15 @@ func (s *ChunkService) RetrievalTest(ctx context.Context, req *service.Retrieval
 	// Hydrate: ES returns zero vectors; replace with real vectors from FetchChunkVectors.
 	// Infinity/OceanBase chunks already carry real vectors and are left unchanged.
 	hydrateChunkVectors(ctx, s.docEngine, filteredChunks, req.Datasets, tenantIDs)
+	if err := archivepublication.CheckRows(ctx, dao.DB, req.Datasets, filteredChunks); err != nil {
+		return nil, err
+	}
+	for _, row := range filteredChunks {
+		archivepublication.CopySourceFields(row, row)
+		for _, key := range archivepublication.SourceFields {
+			delete(row, key)
+		}
+	}
 
 	common.Info("RetrievalTest completed", zap.String("userID", permission.UserIDFromContext(ctx)), zap.Any("kbID", req.Datasets), zap.String("question", req.Question), zap.Int64("chunkCount", int64(len(filteredChunks))))
 
@@ -586,6 +597,15 @@ func (s *ChunkService) Get(ctx context.Context, req *service.GetChunkRequest) (*
 	// The lookup stays inside the dataset named in the route, and the row must
 	// resolve to the document named in the route: a chunk id alone is not
 	// authority to read another dataset's (or another document's) chunk.
+	if doc.ParserID == "code_archive" {
+		generations, err := archivepublication.VisibleGenerations(ctx, dao.DB, []string{doc.KbID}, []string{doc.ID})
+		if err != nil {
+			return nil, err
+		}
+		if generation := generations[doc.ID]; generation.RunID == "" || generation.AttemptID == "" {
+			return nil, archivepublication.ErrNotPublished
+		}
+	}
 	indexName := fmt.Sprintf("ragflow_%s", targetTenantID)
 	rawChunk, err := s.docEngine.GetChunk(ctx, indexName, req.ChunkID, []string{req.DatasetID})
 	if err != nil {
@@ -601,15 +621,21 @@ func (s *ChunkService) Get(ctx context.Context, req *service.GetChunkRequest) (*
 	if !utility.IsEmpty(chunk["compile_kwd"]) {
 		return nil, fmt.Errorf("chunk not found")
 	}
+	if err := archivepublication.CheckRows(ctx, dao.DB, []string{req.DatasetID}, []map[string]any{chunk}); err != nil {
+		return nil, err
+	}
 
 	// Return the stored row without tokenized/vector runtime fields.
 	result := make(map[string]interface{}, len(chunk))
 	for k, v := range chunk {
-		if isChunkRuntimeField(k) {
+		if isChunkRuntimeField(k) || archivepublication.IsSourceField(k) {
 			continue
 		}
 		result[k] = v
 	}
+	archivepublication.CopySourceFields(result, chunk)
+	delete(result, "archive_run_kwd")
+	delete(result, "archive_attempt_kwd")
 	return &service.GetChunkResponse{Chunk: result}, nil
 }
 
@@ -911,11 +937,20 @@ func (s *ChunkService) List(ctx context.Context, req *service.ListChunksRequest)
 	if req.AvailableInt != nil {
 		searchReq.Filter["available_int"] = *req.AvailableInt
 	}
+	searchReq.SelectFields = append(searchReq.SelectFields, "doc_id")
+	searchReq.SelectFields = append(searchReq.SelectFields, archivepublication.ReadSourceFields()...)
+	searchReq.Filter, err = archivepublication.Filter(ctx, dao.DB, []string{doc.KbID}, []string{doc.ID}, searchReq.Filter)
+	if err != nil {
+		return nil, err
+	}
 
 	// Execute search through unified engine interface
 	searchResp, err := s.docEngine.Search(ctx, searchReq)
 	if err != nil {
 		return nil, fmt.Errorf("search failed: %w", err)
+	}
+	if err := archivepublication.CheckRows(ctx, dao.DB, []string{doc.KbID}, searchResp.Chunks); err != nil {
+		return nil, err
 	}
 
 	chunks := make([]map[string]interface{}, 0, len(searchResp.Chunks))
@@ -934,7 +969,7 @@ func (s *ChunkService) List(ctx context.Context, req *service.ListChunksRequest)
 			"important_kwd_empty_count": true, "kb_id": true, "mom_id": true, "page_num_int": true,
 		}
 		for k, v := range chunk {
-			if skipFields[k] || strings.HasSuffix(k, "_vec") || strings.Contains(k, "_sm_") || strings.HasSuffix(k, "_ltks") || strings.HasSuffix(k, "_tks") {
+			if archivepublication.IsSourceField(k) || skipFields[k] || strings.HasSuffix(k, "_vec") || strings.Contains(k, "_sm_") || strings.HasSuffix(k, "_ltks") || strings.HasSuffix(k, "_tks") {
 				continue
 			}
 			switch k {
@@ -994,6 +1029,9 @@ func (s *ChunkService) List(ctx context.Context, req *service.ListChunksRequest)
 		utility.SetFieldArray(result, "questions", result["question_kwd"])
 		result["document_id"] = req.DocID
 		result["dataset_id"] = doc.KbID
+		archivepublication.CopySourceFields(result, chunk)
+		delete(result, "archive_run_kwd")
+		delete(result, "archive_attempt_kwd")
 		chunks = append(chunks, result)
 	}
 
@@ -1043,6 +1081,16 @@ func (s *ChunkService) List(ctx context.Context, req *service.ListChunksRequest)
 		"update_date":      utility.FormatTimeToString(doc.UpdateDate, timeFormat),
 	}
 
+	if doc.ParserID == "code_archive" {
+		metadata, err := archivepublication.Metadata(ctx, dao.DB, []string{doc.ID})
+		if err != nil {
+			return nil, err
+		}
+		document.ArchiveMetadataFor(metadata[doc.ID]).AddTo(docInfo)
+	}
+	if err := archivepublication.CheckRows(ctx, dao.DB, []string{doc.KbID}, searchResp.Chunks); err != nil {
+		return nil, err
+	}
 	return &service.ListChunksResponse{
 		Total:  searchResp.Total,
 		Chunks: chunks,
@@ -1078,13 +1126,31 @@ func (s *ChunkService) SwitchChunks(ctx context.Context, datasetID, documentID s
 		return fmt.Errorf("document does not belong to this dataset")
 	}
 
+	// Single-chunk engine updates accept only flat equality conditions, so an
+	// archive is scoped to its published generation rather than a visibility tree.
+	var generation archivepublication.Generation
+	if doc.ParserID == codearchive.ParserID {
+		generations, genErr := archivepublication.VisibleGenerations(ctx, dao.DB, []string{datasetID}, []string{documentID})
+		if genErr != nil {
+			return genErr
+		}
+		generation = generations[documentID]
+		if generation.RunID == "" || generation.AttemptID == "" {
+			return archivepublication.ErrNotPublished
+		}
+	}
 	for _, cid := range chunkIDs {
 		indexName := fmt.Sprintf("ragflow_%s", targetTenantID)
 
-		if err = s.docEngine.UpdateChunks(ctx, map[string]interface{}{
+		condition := map[string]interface{}{
 			"id":     cid,
 			"doc_id": documentID,
-		}, map[string]interface{}{
+		}
+		if generation.AttemptID != "" {
+			condition["archive_run_kwd"] = generation.RunID
+			condition["archive_attempt_kwd"] = generation.AttemptID
+		}
+		if err = s.docEngine.UpdateChunks(ctx, condition, map[string]interface{}{
 			"id":            cid,
 			"available_int": availableInt,
 		}, indexName, datasetID); err != nil {
@@ -1123,6 +1189,9 @@ func (s *ChunkService) UpdateChunk(ctx context.Context, req *service.UpdateChunk
 	}
 
 	// Fetch existing chunk first
+	if doc.ParserID == "code_archive" || doc.Type == "code" {
+		return &codearchive.Error{Code: "ZIP_CHUNKS_READ_ONLY"}
+	}
 	indexName := fmt.Sprintf("ragflow_%s", targetTenantID)
 	existingChunk, err := s.docEngine.GetChunk(ctx, indexName, req.ChunkID, []string{req.DatasetID})
 	if err != nil {
@@ -1290,10 +1359,12 @@ func (s *ChunkService) RemoveChunks(ctx context.Context, req *service.RemoveChun
 	if doc.KbID != req.DatasetID {
 		return 0, permission.ErrResourceNotFound
 	}
-
 	kb, err := s.getAccessibleKnowledgebase(ctx, doc.KbID, permission.OperationUpdate)
 	if err != nil {
 		return 0, err
+	}
+	if doc.ParserID == "code_archive" || doc.Type == "code" {
+		return 0, &codearchive.Error{Code: "ZIP_CHUNKS_READ_ONLY"}
 	}
 	targetTenantID := kb.TenantID
 
@@ -1402,6 +1473,9 @@ func (s *ChunkService) AddChunk(ctx context.Context, req *service.AddChunkReques
 	doc, err := s.documentDAO.GetByDocumentIDAndDatasetID(ctx, dao.DB, req.DocumentID, req.DatasetID)
 	if err != nil || doc == nil {
 		return nil, addChunkError{code: common.CodeDataError, message: fmt.Sprintf("you don't own the document %s", req.DocumentID)}
+	}
+	if doc.ParserID == "code_archive" || doc.Type == "code" {
+		return nil, addChunkError{code: common.CodeDataError, message: "ZIP_CHUNKS_READ_ONLY"}
 	}
 
 	content := strings.TrimSpace(req.Content)

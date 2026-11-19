@@ -8,6 +8,7 @@ import (
 	"ragflow/internal/entity"
 	"ragflow/internal/ingestion/component/schema"
 	parserchunk "ragflow/internal/parser/chunk"
+	"ragflow/internal/parser/codearchive"
 
 	"go.uber.org/zap"
 )
@@ -83,6 +84,7 @@ var titleFamilyParamKeys = unionParamKeys(
 )
 
 var componentParamSchemaKeys = map[string]map[string]struct{}{
+	strings.ToLower(common.ComponentNameCodeArchive):  extractJSONTags(codearchive.Config{}),
 	strings.ToLower(schema.ComponentNameTitleChunker): titleFamilyParamKeys,
 	// ManualChunker reuses TitleChunkerParam. It pins method=group and is exempt
 	// from the token cap, so method, chunk_token_cap and include_heading_content

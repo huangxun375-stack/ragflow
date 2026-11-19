@@ -161,7 +161,7 @@ func (r *Registry) List() *BuiltinPipelineListResponse {
 	}
 	out := make([]*BuiltinPipelineMeta, 0, len(r.list))
 	for _, item := range r.list {
-		if item == nil {
+		if item == nil || item.ParserID == "code_archive" {
 			continue
 		}
 		cp := *item

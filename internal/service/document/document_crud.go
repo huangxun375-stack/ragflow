@@ -9,10 +9,13 @@ import (
 	"ragflow/internal/common"
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
+	"ragflow/internal/ingestion/archiveartifact"
 	"ragflow/internal/ingestion/knowledge_compile"
+	"ragflow/internal/parser/codearchive"
 	"ragflow/internal/permission"
 	permissionresponse "ragflow/internal/permission/response"
 	"ragflow/internal/service"
+	"ragflow/internal/service/archivepublication"
 	"ragflow/internal/service/billing"
 	"ragflow/internal/storage"
 
@@ -206,6 +209,12 @@ func (s *DocumentService) UpdateRunState(ctx context.Context, docID string, prog
 			duration = 0
 		}
 		updates["process_duration"] = duration
+	}
+	if scope, ok := archiveartifact.ScopeFrom(ctx); ok {
+		if scope.DocID != docID {
+			return archivepublication.ErrSuperseded
+		}
+		return archivepublication.Progress(ctx, dao.DB, scope, updates)
 	}
 	return s.documentDAO.UpdateByID(ctx, dao.DB, docID, updates)
 }
@@ -473,6 +482,11 @@ func (s *DocumentService) deleteDocRecordWithCounters(ctx context.Context, doc *
 		result := tx.Where("id = ?", doc.ID).Delete(&entity.Document{})
 		if result.Error != nil {
 			return fmt.Errorf("failed to delete document %s: %w", doc.ID, result.Error)
+		}
+		if doc.ParserID == codearchive.ParserID {
+			if err := archivepublication.DeleteDocuments(ctx, tx, []string{doc.ID}); err != nil {
+				return err
+			}
 		}
 		if result.RowsAffected == 0 {
 			return nil // already deleted by a concurrent request — skip counters

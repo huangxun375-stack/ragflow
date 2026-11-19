@@ -57,6 +57,7 @@ import (
 	"ragflow/internal/dao"
 	"ragflow/internal/engine"
 	"ragflow/internal/engine/kvrocks"
+	ingestioncomponent "ragflow/internal/ingestion/component"
 	"ragflow/internal/ingestion/task"
 	_ "ragflow/internal/ingestion/wire"
 	"ragflow/internal/server"
@@ -64,6 +65,9 @@ import (
 )
 
 func Run(ctx context.Context, serverName string, args *bootstrap.ServerArgs) error {
+	if err := ingestioncomponent.CheckCodeArchiveDeployment(server.GetCodeArchivePolicy()); err != nil {
+		return fmt.Errorf("code archive deployment: %w", err)
+	}
 	// Initialize tokenizer (rag_analyzer)
 	// tokenizer.Init fills DictPath from env var or default, so
 	// tokenizerCfg.DictPath carries the resolved path for downstream use.

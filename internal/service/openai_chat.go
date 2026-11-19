@@ -55,6 +55,11 @@ type OpenAIRequest struct {
 
 // FormattedChunk is a normalized chunk matching Python's chunks_format output.
 type FormattedChunk struct {
+	SourcePath       interface{} `json:"source_path,omitempty"`
+	StartLine        interface{} `json:"start_line,omitempty"`
+	EndLine          interface{} `json:"end_line,omitempty"`
+	CodeLanguage     interface{} `json:"code_lang,omitempty"`
+	ArchiveRunID     interface{} `json:"archive_run_id,omitempty"`
 	ID               string      `json:"id"`
 	Content          string      `json:"content"`
 	DocumentID       string      `json:"document_id"`
@@ -713,7 +718,10 @@ func strVal(v interface{}) string {
 func formatChunks(chunks []map[string]interface{}) []FormattedChunk {
 	out := make([]FormattedChunk, 0, len(chunks))
 	for _, chunk := range chunks {
+		source := map[string]any{}
+		copyArchiveCitationFields(source, chunk)
 		out = append(out, FormattedChunk{
+			SourcePath: source["source_path"], StartLine: source["start_line"], EndLine: source["end_line"], CodeLanguage: source["code_lang"], ArchiveRunID: source["archive_run_id"],
 			ID:               strVal(getValue(chunk, "chunk_id", "id")),
 			Content:          strVal(getValue(chunk, "content", "content_with_weight")),
 			DocumentID:       strVal(getValue(chunk, "doc_id", "document_id")),

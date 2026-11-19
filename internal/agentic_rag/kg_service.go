@@ -25,8 +25,10 @@ import (
 	"strings"
 	"sync"
 
+	"ragflow/internal/dao"
 	"ragflow/internal/engine"
 	enginetypes "ragflow/internal/engine/types"
+	"ragflow/internal/service/archivepublication"
 )
 
 // Knowledge-graph walk backing the graph_explore tool: seed entity rows for
@@ -524,14 +526,27 @@ func (a *KgAdapter) loadPassages(ctx context.Context, tenantID string, datasetID
 	if len(chunkIDs) > limit {
 		chunkIDs = chunkIDs[:limit]
 	}
+	filter := map[string]any{"id": chunkIDs}
+	var err error
+	if len(datasetIDs) == 0 {
+		filter, err = archivepublication.FilterForTenants(ctx, dao.DB, []string{tenantID}, filter)
+	} else {
+		filter, err = archivepublication.Filter(ctx, dao.DB, datasetIDs, nil, filter)
+	}
+	if err != nil {
+		return nil
+	}
 	res, err := a.docEngine.Search(ctx, &enginetypes.SearchRequest{
 		IndexNames:   []string{kgIndexName(tenantID)},
 		KbIDs:        datasetIDs,
-		Filter:       map[string]interface{}{"id": chunkIDs},
-		SelectFields: []string{"content_with_weight", "doc_id", "docnm_kwd", "kb_id"},
+		Filter:       filter,
+		SelectFields: append([]string{"content_with_weight", "doc_id", "docnm_kwd", "kb_id"}, archivepublication.ReadSourceFields()...),
 		Limit:        len(chunkIDs),
 	})
 	if err != nil || res == nil {
+		return nil
+	}
+	if err := archivepublication.CheckRows(ctx, dao.DB, datasetIDs, res.Chunks); err != nil {
 		return nil
 	}
 	out := make([]KgPassage, 0, len(res.Chunks))

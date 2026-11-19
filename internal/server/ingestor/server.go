@@ -31,6 +31,7 @@ import (
 	"ragflow/internal/engine"
 	kvrocks "ragflow/internal/engine/kvrocks"
 	ingestioncore "ragflow/internal/ingestion"
+	"ragflow/internal/ingestion/component"
 	"ragflow/internal/ingestion/knowledge_compile"
 	ingestion "ragflow/internal/ingestion/service"
 	"ragflow/internal/ingestion/task"
@@ -63,6 +64,13 @@ func logTokenizerCounters() {
 // (OS shutdown signal) or the ingestor receives a shutdown command from the
 // admin, then gracefully stops the ingestor.
 func Run(ctx context.Context, cancel context.CancelFunc, serverName string, args *bootstrap.ServerArgs) error {
+	if err := component.CheckCodeArchiveDeployment(server.GetCodeArchivePolicy()); err != nil {
+		return err
+	}
+	cleanup, err := server.GetCodeArchiveCleanupConfig()
+	if err != nil {
+		return err
+	}
 	globalConfig := server.GetConfig()
 	// Initialize the ingestion lifecycle event sink (best-effort; stdout is
 	// always on, ingestor.log.path adds an optional rotated file). Flush it on shutdown.
@@ -71,7 +79,7 @@ func Run(ctx context.Context, cancel context.CancelFunc, serverName string, args
 
 	// Initialize tokenizer (rag_analyzer)
 	// tokenizer.Init handles DictPath fallback: env var → /usr/share/infinity/resource
-	err := tokenizer.Init(&tokenizer.PoolConfig{})
+	err = tokenizer.Init(&tokenizer.PoolConfig{})
 	if err != nil {
 		common.Fatal("Failed to initialize tokenizer", zap.Error(err))
 	}
@@ -118,6 +126,9 @@ func Run(ctx context.Context, cancel context.CancelFunc, serverName string, args
 		return fmt.Errorf("ingestor dependencies invalid: %w", err)
 	}
 	ingestor := ingestion.NewIngestor(*args.Name, int32(workers), []string{"pdf", "docx", "txt"}, ingestorDeps)
+	if err := ingestor.SetArchiveCleanup(cleanup.Interval, cleanup.Grace, cleanup.BatchSize); err != nil {
+		return err
+	}
 	ingestor.SetKnowledgeCompileModelConfig(
 		globalConfig.GetDefaultChatModel().Name,
 		globalConfig.GetDefaultEmbeddingModel().Name,

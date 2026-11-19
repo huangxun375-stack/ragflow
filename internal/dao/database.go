@@ -290,6 +290,10 @@ func autoMigrateModels() []interface{} {
 		&entity.TenantModel{},
 		&entity.TenantModelProvider{},
 		&entity.IngestionTask{},
+		&entity.DocumentCodeArchive{},
+		&entity.ArchiveRun{},
+		&entity.ArchiveAttempt{},
+		&entity.ArchiveDatasetFence{},
 		&entity.IngestionTaskLog{},
 		&entity.FileCommit{},
 		&entity.FileCommitItem{},
@@ -578,6 +582,10 @@ func isPostgresDuplicateObjectErr(err error) bool {
 // process never runs them itself.
 func autoMigrateRuntimeModels(ctx context.Context, db *gorm.DB) error {
 	goRuntimeModels := []interface{}{
+		&entity.DocumentCodeArchive{},
+		&entity.ArchiveRun{},
+		&entity.ArchiveAttempt{},
+		&entity.ArchiveDatasetFence{},
 		&entity.IngestionTask{},
 		&entity.IngestionTaskLog{},
 		&entity.MemoryTask{},

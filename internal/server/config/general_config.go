@@ -109,6 +109,16 @@ func (c *Config) DocEngineType() string {
 	return c.general.DocEngine
 }
 
+// SupportsCodeArchive applies only to ZIP ingestion; ordinary parsers retain
+// their configured database and document engine support.
+func (c *Config) SupportsCodeArchive() bool {
+	if c == nil {
+		return true
+	}
+	database, documentEngine := c.DatabaseType(), c.DocEngineType()
+	return (database == "" || database == "mysql") && (documentEngine == "" || documentEngine == "elasticsearch")
+}
+
 func (c *Config) StorageEngineType() string {
 	if c.environments.StorageType != "" {
 		return c.environments.StorageType

@@ -25,6 +25,7 @@ import (
 	"ragflow/internal/engine"
 	enginetypes "ragflow/internal/engine/types"
 	"ragflow/internal/entity"
+	"ragflow/internal/service/archivepublication"
 )
 
 // Bm25Adapter backs search_bm25_chunks with pure lexical full-text (BM25)
@@ -115,6 +116,16 @@ func (b *Bm25Adapter) SearchBm25(ctx context.Context, req runtime.Bm25Request) (
 	// as Grep.
 	ectx, ecancel := engineCallContext(ctx)
 	defer ecancel()
+	var visibilityErr error
+	if len(req.DatasetIDs) == 0 && len(req.DocScope) == 0 {
+		filter, visibilityErr = archivepublication.FilterForTenants(ectx, dao.DB, []string{req.TenantID}, filter)
+	} else {
+		filter, visibilityErr = archivepublication.Filter(ectx, dao.DB, req.DatasetIDs, req.DocScope, filter)
+	}
+	if visibilityErr != nil {
+		return nil, visibilityErr
+	}
+	fields := append(append([]string{}, grepChunksSelectFields...), archivepublication.ReadSourceFields()...)
 
 	language := ""
 	if b.queryTokenizer != nil {
@@ -140,10 +151,13 @@ func (b *Bm25Adapter) SearchBm25(ctx context.Context, req runtime.Bm25Request) (
 				matchExpr,
 			},
 			Filter:       filter,
-			SelectFields: grepChunksSelectFields,
+			SelectFields: fields,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("search_bm25_chunks: query %q failed: %w", q, err)
+		}
+		if err := archivepublication.CheckRows(ectx, dao.DB, req.DatasetIDs, res.Chunks); err != nil {
+			return nil, err
 		}
 		for _, raw := range res.Chunks {
 			id := runtime.FirstStringFromMap(raw, "id", "_id")
@@ -156,16 +170,25 @@ func (b *Bm25Adapter) SearchBm25(ctx context.Context, req runtime.Bm25Request) (
 			}
 			seen[id] = struct{}{}
 			merged = append(merged, runtime.RetrievalChunk{
-				ID:           id,
-				Content:      content,
-				DocumentID:   runtime.StringFromMap(raw, "doc_id"),
-				DocumentName: runtime.StringFromMap(raw, "docnm_kwd"),
-				DatasetID:    runtime.StringFromMap(raw, "kb_id"),
-				ChunkIndex:   runtime.IntFromMap(raw, "chunk_order_int"),
-				PageNum:      runtime.IntFromMap(raw, "page_num_int"),
-				Score:        floatFromMap(raw, "_score"),
+				SourcePath:       runtime.StringFromMap(raw, "source_path_kwd"),
+				StartLine:        runtime.IntFromMap(raw, "start_line_int"),
+				EndLine:          runtime.IntFromMap(raw, "end_line_int"),
+				CodeLanguage:     runtime.StringFromMap(raw, "code_lang_kwd"),
+				ArchiveRunID:     runtime.StringFromMap(raw, "archive_run_kwd"),
+				ArchiveAttemptID: runtime.StringFromMap(raw, "archive_attempt_kwd"),
+				ID:               id,
+				Content:          content,
+				DocumentID:       runtime.StringFromMap(raw, "doc_id"),
+				DocumentName:     runtime.StringFromMap(raw, "docnm_kwd"),
+				DatasetID:        runtime.StringFromMap(raw, "kb_id"),
+				ChunkIndex:       runtime.IntFromMap(raw, "chunk_order_int"),
+				PageNum:          runtime.IntFromMap(raw, "page_num_int"),
+				Score:            floatFromMap(raw, "_score"),
 			})
 		}
+	}
+	if err := checkArchiveRetrievalChunks(ectx, req.DatasetIDs, merged); err != nil {
+		return nil, err
 	}
 	return merged, nil
 }

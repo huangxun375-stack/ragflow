@@ -8,6 +8,7 @@ import (
 	"ragflow/internal/common"
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
+	"ragflow/internal/parser/codearchive"
 	"ragflow/internal/parser/parser"
 	"ragflow/internal/parser/tableutil"
 	"ragflow/internal/permission"
@@ -133,6 +134,9 @@ func (s *FileService) GetFileContents(ctx context.Context, fileDicts []map[strin
 		}
 		name, _ := fd["name"].(string)
 		mimeType, _ := fd["mime_type"].(string)
+		if utility.IsArchiveContent(name, mimeType) {
+			return nil, nil, fmt.Errorf("%w: code archives cannot be consumed as attachments", &codearchive.Error{Code: "ZIP_ATTACHMENT_UNSUPPORTED"})
+		}
 		createdBy, _ := fd["created_by"].(string)
 		if createdBy == "" {
 			createdBy = uid
@@ -210,6 +214,9 @@ func (s *FileService) ParseAgentUploads(ctx context.Context, fileDicts []map[str
 		if utility.IsVideoFilename(name) {
 			return nil, fmt.Errorf("file %q: video content is not supported", name)
 		}
+		if utility.IsArchiveContent(name, mimeType) {
+			return nil, fmt.Errorf("%w: code archives cannot be consumed as attachments", &codearchive.Error{Code: "ZIP_ATTACHMENT_UNSUPPORTED"})
+		}
 
 		mediaType := strings.ToLower(strings.TrimSpace(strings.Split(mimeType, ";")[0]))
 		if strings.HasPrefix(mediaType, "image/") {
@@ -227,6 +234,9 @@ func (s *FileService) ParseAgentUploads(ctx context.Context, fileDicts []map[str
 }
 
 func parseAgentUploadContent(ctx context.Context, filename string, data []byte, layoutRecognize string) (string, error) {
+	if utility.IsArchiveFilename(filename) {
+		return "", fmt.Errorf("%w: code archives cannot be consumed as attachments", &codearchive.Error{Code: "ZIP_ATTACHMENT_UNSUPPORTED"})
+	}
 	content := string(data)
 	fileType := utility.GetFileType(filename)
 	if fileType != utility.FileTypeOTHER {

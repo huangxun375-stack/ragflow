@@ -26,6 +26,8 @@ import (
 	"ragflow/internal/dao"
 	"ragflow/internal/service"
 	syncerconnector "ragflow/internal/syncer/connector"
+	"ragflow/internal/utility"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -402,6 +404,9 @@ func (r *SyncRunner) processDocumentWithRetry(ctx context.Context, taskContext d
 
 // processDocument resolves IDs, skips unchanged fingerprints, fetches blobs, and upserts.
 func (r *SyncRunner) processDocument(ctx context.Context, taskContext dao.SyncTaskContext, sourceType string, session syncerconnector.SyncSession, sourceDocument syncerconnector.SourceDocument) (service.DocumentUpsertResult, error) {
+	if utility.IsArchiveFilename(sourceDocument.SemanticIdentifier) || strings.EqualFold(strings.TrimPrefix(sourceDocument.Extension, "."), "zip") {
+		return service.DocumentUpsertResult{Action: service.DocumentActionSkipped}, nil
+	}
 	resolved, err := r.idResolver.Resolve(ctx, taskContext.Knowledgebase.ID, taskContext.Connector.ID, sourceType, sourceDocument.SourceID)
 	if err != nil {
 		return service.DocumentUpsertResult{}, err

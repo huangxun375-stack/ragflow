@@ -24,7 +24,9 @@ import (
 	"strings"
 
 	"ragflow/internal/common"
+	"ragflow/internal/dao"
 	"ragflow/internal/engine/types"
+	"ragflow/internal/service/archivepublication"
 
 	"go.uber.org/zap"
 )
@@ -73,13 +75,26 @@ func FetchChunkVectors(ctx context.Context, engine vectorFetcher, chunkIDs, tena
 	}
 
 	// Query each tenant index for the requested chunk vectors.
+	filter := map[string]any{"id": idList}
+	var filterErr error
+	if len(kbIDs) == 0 {
+		filter, filterErr = archivepublication.FilterForTenants(ctx, dao.DB, tenantIDs, filter)
+	} else {
+		filter, filterErr = archivepublication.Filter(ctx, dao.DB, kbIDs, nil, filter)
+	}
+	if filterErr != nil {
+		for _, cid := range chunkIDs {
+			out[cid] = zeroVector(dim)
+		}
+		return out
+	}
 	for _, tid := range tenantIDs {
 		idxName := fmt.Sprintf("ragflow_%s", tid)
 		res, err := engine.Search(ctx, &types.SearchRequest{
 			IndexNames:   []string{idxName},
 			KbIDs:        kbIDs,
-			SelectFields: []string{vecField},
-			Filter:       map[string]interface{}{"id": idList},
+			SelectFields: append([]string{vecField, "id", "doc_id"}, archivepublication.ReadSourceFields()...),
+			Filter:       filter,
 			Limit:        len(chunkIDs),
 		})
 		if err != nil {
@@ -87,6 +102,9 @@ func FetchChunkVectors(ctx context.Context, engine vectorFetcher, chunkIDs, tena
 				zap.String("index", idxName),
 				zap.String("error", err.Error()))
 			continue
+		}
+		if err := archivepublication.CheckRows(ctx, dao.DB, kbIDs, res.Chunks); err != nil {
+			return map[string][]float64{}
 		}
 
 		for _, chunk := range res.Chunks {

@@ -832,8 +832,7 @@ build_go() {
     echo -e "${GREEN}✓ Go ragflow_server built successfully: $RAGFLOW_SERVER_BINARY${NC}"
 }
 
-# Configure CGO flags for native libraries (office_oxide, pdfium, pdf_oxide).
-# All three are statically linked — no LD_LIBRARY_PATH or -Wl,-rpath needed.
+# Configure CGO flags for the static document libraries and shared code parser.
 setup_cgo_env() {
     detect_target_platform
 
@@ -1009,6 +1008,44 @@ setup_cgo_env() {
                 -liconv -lresolv -lc++"
             ;;
     esac
+
+    # The official language-pack binding searches its own .lib directory.
+    # Keep release binaries outside the module cache and add our verified path.
+    local code_archive_root="${RAGFLOW_CODE_ARCHIVE_DEPS:-${PROJECT_ROOT}/deps/code_archive}"
+    local code_archive_ext=so
+    [ "$TARGET_OS" = "darwin" ] && code_archive_ext=dylib
+    local code_archive_grammars="${RAGFLOW_CODE_ARCHIVE_GRAMMAR_CACHE:-${code_archive_root}/grammars}"
+    local code_archive_language code_archive_missing=0
+    [ -s "${code_archive_root}/native/libts_pack_core_ffi.${code_archive_ext}" ] || code_archive_missing=1
+    for code_archive_language in python go java javascript typescript tsx vue html c cpp lua; do
+        [ -s "${code_archive_grammars}/libtree_sitter_${code_archive_language}.${code_archive_ext}" ] || code_archive_missing=1
+    done
+    # Like the other native dependencies, fetch the checksum-pinned assets on
+    # first use; an explicitly configured grammar cache is never written here.
+    if [ "$code_archive_missing" = 1 ] && [ -z "${RAGFLOW_CODE_ARCHIVE_GRAMMAR_CACHE:-}" ]; then
+        echo "Code archive native assets missing; running tools/code_archive/prepare.sh"
+        RAGFLOW_TARGET_OS="$TARGET_OS" RAGFLOW_TARGET_ARCH="$TARGET_ARCH" \
+            bash "${PROJECT_ROOT}/tools/code_archive/prepare.sh" "$code_archive_root" || return 1
+    fi
+    export RAGFLOW_CODE_ARCHIVE_GRAMMAR_CACHE="$code_archive_grammars"
+    if [ ! -s "${code_archive_root}/native/libts_pack_core_ffi.${code_archive_ext}" ]; then
+        echo "Missing code archive native library. Run: bash tools/code_archive/prepare.sh"
+        return 1
+    fi
+    for code_archive_language in python go java javascript typescript tsx vue html c cpp lua; do
+        if [ ! -s "${RAGFLOW_CODE_ARCHIVE_GRAMMAR_CACHE}/libtree_sitter_${code_archive_language}.${code_archive_ext}" ]; then
+            echo "Missing code archive grammar ${code_archive_language}. Run: bash tools/code_archive/prepare.sh"
+            return 1
+        fi
+    done
+    export CGO_LDFLAGS="$CGO_LDFLAGS -L${code_archive_root}/native -Wl,-rpath,${code_archive_root}/native"
+    # The runtime image retains deps/code_archive relative to bin/. The absolute
+    # development path also supports go test binaries created in /tmp.
+    if [ "$TARGET_OS" = "linux" ]; then
+        export CGO_LDFLAGS="$CGO_LDFLAGS -Wl,-rpath,\$ORIGIN/../deps/code_archive/native"
+    else
+        export CGO_LDFLAGS="$CGO_LDFLAGS -Wl,-rpath,@executable_path/../deps/code_archive/native"
+    fi
 
     echo "CGO_CFLAGS:   $CGO_CFLAGS"
     echo "CGO_LDFLAGS:  $CGO_LDFLAGS"

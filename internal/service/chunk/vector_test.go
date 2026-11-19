@@ -63,6 +63,7 @@ var bg = context.Background()
 // --- FetchChunkVectors tests ---
 
 func TestFetchChunkVectors_EmptyInput(t *testing.T) {
+	pushChunkTestDB(t, setupChunkTestDB(t))
 	// nil chunkIDs
 	mock := &mockVectorFetcher{engineType: "elasticsearch"}
 	result := FetchChunkVectors(bg, mock, nil, []string{"t1"}, []string{"kb1"}, 1024)
@@ -82,6 +83,7 @@ func TestFetchChunkVectors_EmptyInput(t *testing.T) {
 }
 
 func TestFetchChunkVectors_ZeroDimReturnsEmpty(t *testing.T) {
+	pushChunkTestDB(t, setupChunkTestDB(t))
 	mock := &mockVectorFetcher{engineType: "elasticsearch"}
 	result := FetchChunkVectors(bg, mock, []string{"c1"}, []string{"t1"}, []string{"kb1"}, 0)
 	if len(result) != 0 {
@@ -94,6 +96,7 @@ func TestFetchChunkVectors_ZeroDimReturnsEmpty(t *testing.T) {
 }
 
 func TestFetchChunkVectors_InfinitySkipsSearch(t *testing.T) {
+	pushChunkTestDB(t, setupChunkTestDB(t))
 	mock := &mockVectorFetcher{engineType: "infinity"}
 	result := FetchChunkVectors(bg, mock, []string{"c1", "c2"}, []string{"t1"}, []string{"kb1"}, 3)
 	if len(result) != 2 {
@@ -114,6 +117,7 @@ func TestFetchChunkVectors_InfinitySkipsSearch(t *testing.T) {
 }
 
 func TestFetchChunkVectors_OceanBaseSearchesVector(t *testing.T) {
+	pushChunkTestDB(t, setupChunkTestDB(t))
 	mock := &mockVectorFetcher{
 		engineType: "oceanbase",
 		searchResults: map[string]*types.SearchResult{
@@ -137,6 +141,7 @@ func TestFetchChunkVectors_OceanBaseSearchesVector(t *testing.T) {
 }
 
 func TestFetchChunkVectors_ESStringVector(t *testing.T) {
+	pushChunkTestDB(t, setupChunkTestDB(t))
 	mock := &mockVectorFetcher{
 		engineType: "elasticsearch",
 		searchResults: map[string]*types.SearchResult{
@@ -161,6 +166,7 @@ func TestFetchChunkVectors_ESStringVector(t *testing.T) {
 }
 
 func TestFetchChunkVectors_ESFloatSliceVector(t *testing.T) {
+	pushChunkTestDB(t, setupChunkTestDB(t))
 	mock := &mockVectorFetcher{
 		engineType: "elasticsearch",
 		searchResults: map[string]*types.SearchResult{
@@ -178,6 +184,7 @@ func TestFetchChunkVectors_ESFloatSliceVector(t *testing.T) {
 }
 
 func TestFetchChunkVectors_ESInterfaceSliceVector(t *testing.T) {
+	pushChunkTestDB(t, setupChunkTestDB(t))
 	mock := &mockVectorFetcher{
 		engineType: "elasticsearch",
 		searchResults: map[string]*types.SearchResult{
@@ -195,6 +202,7 @@ func TestFetchChunkVectors_ESInterfaceSliceVector(t *testing.T) {
 }
 
 func TestFetchChunkVectors_JSONNumberVector(t *testing.T) {
+	pushChunkTestDB(t, setupChunkTestDB(t))
 	mock := &mockVectorFetcher{
 		engineType: "elasticsearch",
 		searchResults: map[string]*types.SearchResult{
@@ -215,6 +223,7 @@ func TestFetchChunkVectors_JSONNumberVector(t *testing.T) {
 }
 
 func TestFetchChunkVectors_SearchErrorDegradesGracefully(t *testing.T) {
+	pushChunkTestDB(t, setupChunkTestDB(t))
 	mock := &mockVectorFetcher{
 		engineType: "elasticsearch",
 		searchErr:  errors.New("connection refused"),
@@ -233,6 +242,7 @@ func TestFetchChunkVectors_SearchErrorDegradesGracefully(t *testing.T) {
 }
 
 func TestFetchChunkVectors_MissingChunkGetsZero(t *testing.T) {
+	pushChunkTestDB(t, setupChunkTestDB(t))
 	mock := &mockVectorFetcher{
 		engineType: "elasticsearch",
 		searchResults: map[string]*types.SearchResult{
@@ -254,6 +264,7 @@ func TestFetchChunkVectors_MissingChunkGetsZero(t *testing.T) {
 }
 
 func TestFetchChunkVectors_WrongDimVectorReturnsZero(t *testing.T) {
+	pushChunkTestDB(t, setupChunkTestDB(t))
 	// String with wrong dim
 	mock := &mockVectorFetcher{
 		engineType: "elasticsearch",
@@ -289,6 +300,7 @@ func TestFetchChunkVectors_WrongDimVectorReturnsZero(t *testing.T) {
 }
 
 func TestFetchChunkVectors_ZeroVectorsAreIndependent(t *testing.T) {
+	pushChunkTestDB(t, setupChunkTestDB(t))
 	mock := &mockVectorFetcher{
 		engineType: "elasticsearch",
 		searchErr:  errors.New("search down"),
@@ -307,6 +319,7 @@ func TestFetchChunkVectors_ZeroVectorsAreIndependent(t *testing.T) {
 }
 
 func TestFetchChunkVectors_DuplicateChunkID(t *testing.T) {
+	pushChunkTestDB(t, setupChunkTestDB(t))
 	// First result wins when the same chunk ID appears in multiple indices.
 	mock := &mockVectorFetcher{
 		engineType: "elasticsearch",
@@ -330,6 +343,7 @@ func TestFetchChunkVectors_DuplicateChunkID(t *testing.T) {
 }
 
 func TestFetchChunkVectors_ChunkWithEmptyID(t *testing.T) {
+	pushChunkTestDB(t, setupChunkTestDB(t))
 	mock := &mockVectorFetcher{
 		engineType: "elasticsearch",
 		searchResults: map[string]*types.SearchResult{
@@ -348,6 +362,7 @@ func TestFetchChunkVectors_ChunkWithEmptyID(t *testing.T) {
 }
 
 func TestFetchChunkVectors_EmptyTenantIDs(t *testing.T) {
+	pushChunkTestDB(t, setupChunkTestDB(t))
 	mock := &mockVectorFetcher{engineType: "elasticsearch"}
 	result := FetchChunkVectors(bg, mock, []string{"c1", "c2"}, nil, nil, 3)
 	if len(result) != 2 {
@@ -363,6 +378,7 @@ func TestFetchChunkVectors_EmptyTenantIDs(t *testing.T) {
 }
 
 func TestFetchChunkVectors_NilKbIDs(t *testing.T) {
+	pushChunkTestDB(t, setupChunkTestDB(t))
 	mock := &mockVectorFetcher{
 		engineType: "elasticsearch",
 		searchResults: map[string]*types.SearchResult{
@@ -380,6 +396,7 @@ func TestFetchChunkVectors_NilKbIDs(t *testing.T) {
 }
 
 func TestFetchChunkVectors_FilterIsSliceOfInterface(t *testing.T) {
+	pushChunkTestDB(t, setupChunkTestDB(t))
 	// Verify the ES filter uses []interface{} not []string (which would be silently dropped).
 	mock := &mockVectorFetcher{
 		engineType: "elasticsearch",

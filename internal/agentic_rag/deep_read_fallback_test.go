@@ -37,6 +37,7 @@ func deepReadFixture() []map[string]interface{} {
 // implements regexp pushdown and accepts the query, the deep read must not issue
 // a second, slower filtered search.
 func TestFetchScopedPrefersRegexpPushdown(t *testing.T) {
+	setupArchiveVisibilityTestDB(t)
 	fe := &grepFakeEngine{regexpChunks: deepReadFixture()}
 	adapter := NewGrepAdapter(fe)
 
@@ -54,6 +55,9 @@ func TestFetchScopedPrefersRegexpPushdown(t *testing.T) {
 	if len(got) != 2 || got[0].ID != "c1" || got[1].ID != "c2" {
 		t.Fatalf("chunks = %v, want [c1 c2] in reading order", chunkIDs(got))
 	}
+	if fe.lastRegexpReq == nil || fe.lastRegexpReq.Filter["and"] == nil {
+		t.Fatal("regexp deep read omitted archive visibility filter")
+	}
 }
 
 // TestFetchScopedFallsBackToMetadataFilter is the reason the fallback exists: an
@@ -61,6 +65,7 @@ func TestFetchScopedPrefersRegexpPushdown(t *testing.T) {
 // match-all regexp, and the deep read has to still return the document's chunks
 // rather than failing the tool call.
 func TestFetchScopedFallsBackToMetadataFilter(t *testing.T) {
+	setupArchiveVisibilityTestDB(t)
 	fe := &grepFakeEngine{
 		searchByRegexpErr: errors.New(`Cannot search on field [content_with_weight] since it is not indexed`),
 		searchChunks:      deepReadFixture(),
@@ -83,6 +88,9 @@ func TestFetchScopedFallsBackToMetadataFilter(t *testing.T) {
 	}
 	if fe.lastReq == nil || fe.lastReq.Filter["doc_id"] == nil {
 		t.Errorf("fallback request lost the doc scope: %+v", fe.lastReq)
+	}
+	if fe.lastReq.Filter["and"] == nil {
+		t.Fatal("fallback deep read omitted archive visibility filter")
 	}
 }
 

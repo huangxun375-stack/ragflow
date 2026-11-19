@@ -494,7 +494,7 @@ func (f *ModelFactory) authorize(ctx context.Context) error {
 	if userID == "" || userID == tenantID {
 		return nil
 	}
-	if err := permission.NewDatabaseChecker(dao.DB).CheckTenant(ctx, tenantID, permission.TenantMember); err != nil {
+	if err := permission.NewDatabaseChecker(modelDatabase(ctx)).CheckTenant(ctx, tenantID, permission.TenantMember); err != nil {
 		return fmt.Errorf("%w: user %s has no access to tenant %s: %w", errModelConfigUnavailable, userID, tenantID, err)
 	}
 	return nil
@@ -504,7 +504,7 @@ func (f *ModelFactory) tenantOwnerMembership(ctx context.Context, tenantID strin
 	if f == nil || f.userTenantDAO == nil {
 		return nil, fmt.Errorf("%w: user tenant DAO is not initialized", errModelConfigUnavailable)
 	}
-	membership, err := f.userTenantDAO.GetOwnerByTenantID(ctx, dao.DB, tenantID)
+	membership, err := f.userTenantDAO.GetOwnerByTenantID(ctx, modelDatabase(ctx), tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get tenant owner: %s: %w", tenantID, err)
 	}
@@ -533,7 +533,7 @@ func (f *ModelFactory) defaultModelReference(ctx context.Context, modelType enti
 	if userID == "" {
 		membership, err = f.tenantOwnerMembership(ctx, tenantID)
 	} else {
-		membership, err = f.userTenantDAO.FilterByUserIDAndTenantID(ctx, dao.DB, userID, tenantID)
+		membership, err = f.userTenantDAO.FilterByUserIDAndTenantID(ctx, modelDatabase(ctx), userID, tenantID)
 		if errors.Is(err, gorm.ErrRecordNotFound) && userID == tenantID {
 			membership, err = f.tenantOwnerMembership(ctx, tenantID)
 		}
@@ -660,7 +660,7 @@ func (s *ModelFactory) resolveModelIdentity(ctx context.Context, requestedType e
 	if tenantID == "" {
 		return nil, fmt.Errorf("%w: tenant id is required", errModelConfigUnavailable)
 	}
-	model, err := s.modelDAO.GetByID(ctx, dao.DB, modelRef)
+	model, err := s.modelDAO.GetByID(ctx, modelDatabase(ctx), modelRef)
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
@@ -673,11 +673,11 @@ func (s *ModelFactory) resolveModelIdentity(ctx context.Context, requestedType e
 	if model != nil {
 		identity.modelName = model.ModelName
 		identity.modelType = entity.ModelType(model.ModelType)
-		identity.providerEntity, err = s.modelProviderDAO.GetByID(ctx, dao.DB, model.ProviderID)
+		identity.providerEntity, err = s.modelProviderDAO.GetByID(ctx, modelDatabase(ctx), model.ProviderID)
 		if err != nil {
 			return nil, fmt.Errorf("%w: provider id=%s lookup failed: %w", errModelConfigUnavailable, model.ProviderID, err)
 		}
-		identity.instanceEntity, err = s.modelInstanceDAO.GetByID(ctx, dao.DB, model.InstanceID)
+		identity.instanceEntity, err = s.modelInstanceDAO.GetByID(ctx, modelDatabase(ctx), model.InstanceID)
 		if err != nil {
 			return nil, fmt.Errorf("%w: instance id=%s lookup failed: %w", errModelConfigUnavailable, model.InstanceID, err)
 		}
@@ -687,15 +687,15 @@ func (s *ModelFactory) resolveModelIdentity(ctx context.Context, requestedType e
 			return nil, fmt.Errorf("%w: model %q has no saved model row or valid composite name: %v", errModelConfigUnavailable, modelRef, parseErr)
 		}
 		identity.modelName = name
-		identity.providerEntity, err = s.modelProviderDAO.GetByTenantIDAndUserIDAndProviderName(ctx, dao.DB, tenantID, owner.UserID, providerName)
+		identity.providerEntity, err = s.modelProviderDAO.GetByTenantIDAndUserIDAndProviderName(ctx, modelDatabase(ctx), tenantID, owner.UserID, providerName)
 		if err != nil {
 			return nil, fmt.Errorf("%w: provider %q lookup failed: %w", errModelConfigUnavailable, providerName, err)
 		}
-		identity.instanceEntity, err = s.modelInstanceDAO.GetByProviderIDAndInstanceName(ctx, dao.DB, identity.providerEntity.ID, instanceName)
+		identity.instanceEntity, err = s.modelInstanceDAO.GetByProviderIDAndInstanceName(ctx, modelDatabase(ctx), identity.providerEntity.ID, instanceName)
 		if err != nil {
 			return nil, fmt.Errorf("%w: instance %q lookup failed: %w", errModelConfigUnavailable, instanceName, err)
 		}
-		candidates, err = s.modelDAO.GetModelsByProviderIDAndInstanceIDAndModelName(ctx, dao.DB, identity.providerEntity.ID, identity.instanceEntity.ID, name)
+		candidates, err = s.modelDAO.GetModelsByProviderIDAndInstanceIDAndModelName(ctx, modelDatabase(ctx), identity.providerEntity.ID, identity.instanceEntity.ID, name)
 		if err != nil {
 			return nil, fmt.Errorf("model %q lookup failed: %w", modelRef, err)
 		}
@@ -735,7 +735,7 @@ func (s *ModelFactory) resolveModelIdentity(ctx context.Context, requestedType e
 		return nil, fmt.Errorf("%w: tenant model %q is disabled", errModelConfigUnavailable, modelRef)
 	}
 	if userID != "" {
-		checker := permission.NewDatabaseChecker(dao.DB)
+		checker := permission.NewDatabaseChecker(modelDatabase(ctx))
 		if err := checker.CheckResource(ctx, permission.ResourceRef{Kind: permission.ResourceKindModelProvider, ID: provider.ID}, permission.OperationRead); err != nil {
 			return nil, fmt.Errorf("%w: user %s cannot read model provider %q: %w", errModelConfigUnavailable, userID, provider.ProviderName, err)
 		}

@@ -125,6 +125,10 @@ func (s *DocumentService) ListDocuments(ctx context.Context, page, pageSize int)
 	}
 
 	latestVersionByCanvas := latestVersionIDsByCanvasDocs(ctx, documents)
+	archiveMetadata, err := archiveMetadataByDocuments(ctx, documents)
+	if err != nil {
+		return nil, 0, err
+	}
 	responses := make([]*DocumentResponse, len(documents))
 	for i, doc := range documents {
 		var task *entity.IngestionTask
@@ -134,6 +138,9 @@ func (s *DocumentService) ListDocuments(ctx context.Context, page, pageSize int)
 			latestEvent = latestEventsByDocument[doc.ID]
 		}
 		responses[i] = s.toResponseWithTask(ctx, doc, task, latestEvent, latestVersionByCanvas)
+		if isArchiveDocument(doc) {
+			responses[i].ArchiveMetadata = ArchiveMetadataFor(archiveMetadata[doc.ID])
+		}
 	}
 
 	return responses, total, nil
@@ -302,8 +309,20 @@ func (s *DocumentService) GetDocumentsByAuthorID(ctx context.Context, authorID, 
 
 // toResponse convert model.Document to DocumentResponse
 func (s *DocumentService) toResponse(ctx context.Context, doc *entity.Document) (*DocumentResponse, error) {
+	var archiveMeta *ArchiveMetadata
+	if isArchiveDocument(doc) {
+		metadata, err := archiveMetadataByDocuments(ctx, []*entity.Document{doc})
+		if err != nil {
+			return nil, err
+		}
+		archiveMeta = ArchiveMetadataFor(metadata[doc.ID])
+	}
 	if s.ingestionTaskDAO == nil || doc == nil || doc.ID == "" {
-		return s.toResponseWithTask(ctx, doc, nil, nil, nil), nil
+		response := s.toResponseWithTask(ctx, doc, nil, nil, nil)
+		if response != nil {
+			response.ArchiveMetadata = archiveMeta
+		}
+		return response, nil
 	}
 	task, err := s.ingestionTaskDAO.GetByDocumentID(ctx, dao.DB, doc.ID)
 	if err != nil {
@@ -314,7 +333,9 @@ func (s *DocumentService) toResponse(ctx context.Context, doc *entity.Document) 
 		common.Warn(fmt.Sprintf("get latest ingestion event for document %s: %v", doc.ID, err))
 		latestEventsByDocument = make(map[string]*service.IngestionEventItem)
 	}
-	return s.toResponseWithTask(ctx, doc, task, latestEventsByDocument[doc.ID], nil), nil
+	response := s.toResponseWithTask(ctx, doc, task, latestEventsByDocument[doc.ID], nil)
+	response.ArchiveMetadata = archiveMeta
+	return response, nil
 }
 
 func (s *DocumentService) latestIngestionEventsByDocument(ctx context.Context, tasksByDocument map[string]*entity.IngestionTask) (map[string]*service.IngestionEventItem, error) {

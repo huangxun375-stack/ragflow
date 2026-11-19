@@ -9,6 +9,7 @@ import (
 	componentpkg "ragflow/internal/ingestion/component"
 	"ragflow/internal/ingestion/component/schema"
 	pipelinepkg "ragflow/internal/ingestion/pipeline"
+	"ragflow/internal/parser/codearchive"
 	"ragflow/internal/permission"
 	"ragflow/internal/service"
 	"ragflow/internal/utility"
@@ -28,6 +29,9 @@ const generalParserID = "general"
 // picture pipeline, audio by audio, presentations by presentation and mail by
 // email.
 func dedicatedDocumentParserID(filetype utility.FileType, filename string) string {
+	if codearchive.IsArchive(filename) {
+		return codearchive.ParserID
+	}
 	switch filetype {
 	case utility.FileTypeVISUAL:
 		return "picture"
@@ -155,6 +159,9 @@ func parserSelectionColumns(sel *service.ParserSelection) (string, *string) {
 // lookup must not fail an upload, and a half-switched row (new parser, old
 // config) is the inconsistent state this function exists to avoid.
 func resolveDocumentParser(ctx context.Context, kb *entity.Knowledgebase, filename string, filetype utility.FileType, base entity.JSONMap) (*service.ParserSelection, entity.JSONMap) {
+	if codearchive.IsArchive(filename) {
+		return &service.ParserSelection{Mode: service.ParseModeBuiltIn, ParserID: codearchive.ParserID}, codeArchiveConfig(base)
+	}
 	selection := service.CurrentSelection(kb.ParserID, kb.PipelineID)
 	family := componentpkg.ParserFileFamily(utility.GetFileExtension(filename))
 	if family != "" && selectionGovernsFamily(ctx, selection, kb.ParserConfig, family) {

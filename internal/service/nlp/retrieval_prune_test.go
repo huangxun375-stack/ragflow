@@ -178,7 +178,7 @@ func newRetrievalTestDB(t *testing.T, docIDs ...string) *gorm.DB {
 	}
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(&entity.Document{}); err != nil {
+	if err := db.AutoMigrate(&entity.Document{}, &entity.Knowledgebase{}); err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range docIDs {

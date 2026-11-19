@@ -96,7 +96,7 @@ func (d *usageDriver) Embed(ctx context.Context, modelName *string, request mode
 func TestEncodeSuccessPathCountsEachTextOnce(t *testing.T) {
 	spy := installCountingSpy(t)
 
-	emb := newLimitEmbedder(&usageDriver{perText: 7}, 8192)
+	emb := newLimitEmbedder(t, &usageDriver{perText: 7}, 8192)
 	texts := []string{"alpha beta", "gamma delta epsilon", "zeta"}
 	vecs, err := emb.Encode(context.Background(), texts)
 	if err != nil {
@@ -194,7 +194,7 @@ func TestRecordUsageObservesSummedOwnCount(t *testing.T) {
 func TestEncodeTokenCountsFallBackToOwnCount(t *testing.T) {
 	installCountingSpy(t)
 
-	emb := newLimitEmbedder(&stubDriver{}, 8192) // stubDriver reports no usage
+	emb := newLimitEmbedder(t, &stubDriver{}, 8192) // stubDriver reports no usage
 	texts := []string{"alpha beta gamma", "delta epsilon"}
 	vecs, err := emb.Encode(context.Background(), texts)
 	if err != nil {
@@ -213,7 +213,7 @@ func TestEncodeTokenCountsFallBackToOwnCount(t *testing.T) {
 func TestEncodeTokenCountsSumToProviderUsage(t *testing.T) {
 	installCountingSpy(t)
 
-	emb := newLimitEmbedder(&usageDriver{perText: 7}, 8192)
+	emb := newLimitEmbedder(t, &usageDriver{perText: 7}, 8192)
 	texts := []string{"alpha beta", "gamma delta epsilon", "zeta"}
 	vecs, err := emb.Encode(context.Background(), texts)
 	if err != nil {

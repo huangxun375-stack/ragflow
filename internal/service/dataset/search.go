@@ -15,6 +15,7 @@ import (
 	modelModule "ragflow/internal/entity/models"
 	permissionresponse "ragflow/internal/permission/response"
 	"ragflow/internal/service"
+	"ragflow/internal/service/archivepublication"
 	"ragflow/internal/service/nlp"
 )
 
@@ -333,6 +334,9 @@ func (d *DatasetService) SearchDatasets(ctx context.Context, req *service.Search
 	}
 
 	filteredChunks = nlp.RetrievalByChildren(filteredChunks, tenantIDs, d.docEngine, ctx)
+	if err := archivepublication.CheckRows(ctx, dao.DB, datasetIDs, filteredChunks); err != nil {
+		return nil, err
+	}
 	formatDatasetSearchChunks(filteredChunks, req.IncludeCompiledChunks)
 
 	common.Info("SearchDatasets completed", zap.String("userID", userID), zap.Any("kbID", datasetIDs), zap.String("question", question), zap.Int64("chunkCount", int64(len(filteredChunks))))
@@ -359,6 +363,10 @@ func formatDatasetSearchChunks(filteredChunks []map[string]interface{}, includeC
 		"kb_id":               "dataset_id",
 	}
 	for i := range filteredChunks {
+		archivepublication.CopySourceFields(filteredChunks[i], filteredChunks[i])
+		for _, key := range archivepublication.SourceFields {
+			delete(filteredChunks[i], key)
+		}
 		if includeCompiledChunks != nil && !*includeCompiledChunks {
 			delete(filteredChunks[i], "compile_kwd")
 		}

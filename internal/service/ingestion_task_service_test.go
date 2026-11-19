@@ -650,7 +650,7 @@ func TestIngestionTaskServiceMarkFailedUpdatesTaskStatus(t *testing.T) {
 	ctx := t.Context()
 
 	svc := NewIngestionTaskService()
-	if err := svc.MarkFailed(ctx, "task-1", ""); err != nil {
+	if err := svc.MarkFailed(ctx, "task-1", nil); err != nil {
 		t.Fatalf("MarkFailed failed: %v", err)
 	}
 	task, err := dao.NewIngestionTaskDAO().GetByID(ctx, db, "task-1")
@@ -1884,7 +1884,7 @@ func TestIngestionTaskServiceMarkFailedIdempotentOnAlreadyTerminal(t *testing.T)
 
 	svc := NewIngestionTaskService()
 	ctx := t.Context()
-	if err := svc.MarkFailed(ctx, "task-1", ""); err != nil {
+	if err := svc.MarkFailed(ctx, "task-1", nil); err != nil {
 		t.Fatalf("MarkFailed on already COMPLETED task should be idempotent, got: %v", err)
 	}
 }
@@ -2609,7 +2609,7 @@ func TestIngestionTaskServiceMarkFailedCarriesReason(t *testing.T) {
 	svc := NewIngestionTaskService()
 	svc.SetEventEmitter(emitter)
 	const reason = "boom: nil deref"
-	if err := svc.MarkFailed(ctx, "task-1", reason); err != nil {
+	if err := svc.MarkFailed(ctx, "task-1", errors.New(reason)); err != nil {
 		t.Fatalf("MarkFailed failed: %v", err)
 	}
 	got := emitter.last()

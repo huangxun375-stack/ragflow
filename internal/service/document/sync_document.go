@@ -27,6 +27,7 @@ import (
 
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
+	"ragflow/internal/parser/codearchive"
 	"ragflow/internal/permission"
 	"ragflow/internal/service"
 	"ragflow/internal/storage"
@@ -61,6 +62,9 @@ func (s *DocumentService) Upsert(ctx context.Context, input service.DocumentUpse
 	// return normalized filename
 	filename := syncDocumentFilename(input.SourceDocument.SemanticIdentifier, input.SourceDocument.Extension, input.SourceDocument.SourceID)
 	filetype := utility.FilenameType(filename)
+	if utility.IsArchiveFilename(filename) || kb.ParserID == "code_archive" {
+		return service.DocumentUpsertResult{}, fmt.Errorf("%w: code archives require a local dataset upload", &codearchive.Error{Code: "ZIP_CONNECTOR_UNSUPPORTED"})
+	}
 	if filetype == utility.FileTypeOTHER {
 		return service.DocumentUpsertResult{}, fmt.Errorf("document type %q is not supported", filename)
 	}

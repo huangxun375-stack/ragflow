@@ -106,32 +106,40 @@ func (m ChunkerFileMeta) MarshalJSON() ([]byte, error) {
 // boundaries. Common fields are explicit; dynamic enrichments are
 // preserved in Extra for forward compatibility.
 type ChunkDoc struct {
-	Text          string          `json:"text,omitempty"`
-	DocType       string          `json:"doc_type_kwd,omitempty"`
-	TKNums        *int            `json:"tk_nums,omitempty"`
-	Mom           string          `json:"mom,omitempty"`
-	ImgID         string          `json:"img_id,omitempty"`
-	ID            string          `json:"id,omitempty"`
-	Layout        string          `json:"layout,omitempty"`
-	LayoutType    string          `json:"layout_type,omitempty"`
-	LayoutNo      string          `json:"layoutno,omitempty"`
-	Image         string          `json:"image,omitempty"`
-	ContextAbove  string          `json:"context_above,omitempty"`
-	ContextBelow  string          `json:"context_below,omitempty"`
-	Questions     string          `json:"questions,omitempty"`
-	Keywords      string          `json:"keywords,omitempty"`
-	Summary       string          `json:"summary,omitempty"`
-	ChunkOrderInt *int            `json:"chunk_order_int,omitempty"`
-	TitleTks      string          `json:"title_tks,omitempty"`
-	TitleSmTks    string          `json:"title_sm_tks,omitempty"`
-	ContentLtks   string          `json:"content_ltks,omitempty"`
-	ContentSmLtks string          `json:"content_sm_ltks,omitempty"`
-	PageNumber    *int            `json:"page_number,omitempty"`
-	TopInt        []int           `json:"top_int,omitempty"`
-	PDFPositions  json.RawMessage `json:"_pdf_positions,omitempty"`
-	Positions     json.RawMessage `json:"positions,omitempty"`
-	Sheet         string          `json:"sheet,omitempty"`
-	SheetIndex    *int            `json:"sheet_index,omitempty"`
+	SourcePathKwd  string          `json:"source_path_kwd,omitempty"`
+	StartLineInt   *int            `json:"start_line_int,omitempty"`
+	EndLineInt     *int            `json:"end_line_int,omitempty"`
+	CodeLangKwd    string          `json:"code_lang_kwd,omitempty"`
+	CodeSymbols    []string        `json:"code_symbols,omitempty"`
+	CodeTerms      string          `json:"code_terms,omitempty"`
+	CodeTitleTks   string          `json:"code_title_tks,omitempty"`
+	CodeTitleSmTks string          `json:"code_title_sm_tks,omitempty"`
+	Text           string          `json:"text,omitempty"`
+	DocType        string          `json:"doc_type_kwd,omitempty"`
+	TKNums         *int            `json:"tk_nums,omitempty"`
+	Mom            string          `json:"mom,omitempty"`
+	ImgID          string          `json:"img_id,omitempty"`
+	ID             string          `json:"id,omitempty"`
+	Layout         string          `json:"layout,omitempty"`
+	LayoutType     string          `json:"layout_type,omitempty"`
+	LayoutNo       string          `json:"layoutno,omitempty"`
+	Image          string          `json:"image,omitempty"`
+	ContextAbove   string          `json:"context_above,omitempty"`
+	ContextBelow   string          `json:"context_below,omitempty"`
+	Questions      string          `json:"questions,omitempty"`
+	Keywords       string          `json:"keywords,omitempty"`
+	Summary        string          `json:"summary,omitempty"`
+	ChunkOrderInt  *int            `json:"chunk_order_int,omitempty"`
+	TitleTks       string          `json:"title_tks,omitempty"`
+	TitleSmTks     string          `json:"title_sm_tks,omitempty"`
+	ContentLtks    string          `json:"content_ltks,omitempty"`
+	ContentSmLtks  string          `json:"content_sm_ltks,omitempty"`
+	PageNumber     *int            `json:"page_number,omitempty"`
+	TopInt         []int           `json:"top_int,omitempty"`
+	PDFPositions   json.RawMessage `json:"_pdf_positions,omitempty"`
+	Positions      json.RawMessage `json:"positions,omitempty"`
+	Sheet          string          `json:"sheet,omitempty"`
+	SheetIndex     *int            `json:"sheet_index,omitempty"`
 	// PreserveOrder declares the input sequence authoritative; geometry sorting
 	// must retain it. PaddleOCR sets this for its ordered layout blocks.
 	PreserveOrder bool `json:"_preserve_order,omitempty"`
@@ -166,6 +174,7 @@ func (d *ChunkDoc) UnmarshalJSON(data []byte) error {
 	// so no chunk carries tag_kwd. Deleted rather than left in raw so it
 	// cannot fall through to Extra and be re-emitted by MarshalJSON.
 	for _, key := range []string{
+		"source_path_kwd", "start_line_int", "end_line_int", "code_lang_kwd", "code_symbols", "code_terms", "code_title_tks", "code_title_sm_tks",
 		"text", "doc_type_kwd", "mom", "img_id",
 		"tk_nums", "layout", "layout_type", "layoutno", "image", "media_ref",
 		"context_above", "context_below", "questions", "keywords", "summary",

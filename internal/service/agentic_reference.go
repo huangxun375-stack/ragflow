@@ -25,8 +25,10 @@ import (
 
 	"ragflow/internal/agentic_rag"
 	"ragflow/internal/common"
+	"ragflow/internal/dao"
 	"ragflow/internal/engine"
 	enginetypes "ragflow/internal/engine/types"
+	"ragflow/internal/service/archivepublication"
 )
 
 // buildAgenticReference turns the answer's citations into the reference payload
@@ -164,10 +166,26 @@ func fetchChunksByIDs(ctx context.Context, tenantID string, datasetIDs, ids []st
 		SelectFields: []string{"content_with_weight", "docnm_kwd", "doc_id", "kb_id", "img_id", "position_int"},
 		Limit:        len(ids),
 	}
+	var filterErr error
+	if len(datasetIDs) == 0 {
+		req.Filter, filterErr = archivepublication.FilterForTenants(ctx, dao.DB, []string{tenantID}, req.Filter)
+	} else {
+		req.Filter, filterErr = archivepublication.Filter(ctx, dao.DB, datasetIDs, nil, req.Filter)
+	}
+	if filterErr != nil {
+		return nil
+	}
+	req.SelectFields = append(req.SelectFields, archivepublication.ReadSourceFields()...)
 	res, err := de.Search(ctx, req)
 	if err != nil {
 		common.WarnCtx(ctx, "agentic citation chunk fetch failed", zap.Error(err))
 		return nil
+	}
+	if err := archivepublication.CheckRows(ctx, dao.DB, datasetIDs, res.Chunks); err != nil {
+		return nil
+	}
+	for _, row := range res.Chunks {
+		archivepublication.CopySourceFields(row, row)
 	}
 	return res.Chunks
 }
