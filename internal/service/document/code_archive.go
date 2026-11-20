@@ -1,8 +1,11 @@
 package document
 
 import (
+	"context"
 	"strings"
 
+	"gorm.io/gorm"
+	"ragflow/internal/dao"
 	"ragflow/internal/entity"
 	"ragflow/internal/parser/codearchive"
 	"ragflow/internal/server"
@@ -35,6 +38,26 @@ func codeArchiveConfig(configs ...entity.JSONMap) entity.JSONMap {
 		}
 	}
 	return entity.JSONMap{codeArchiveComponentID: params}
+}
+
+func (s *DocumentService) patchCodeArchiveConfig(ctx context.Context, doc *entity.Document, config entity.JSONMap) error {
+	params, _ := nodeParams(config[codeArchiveComponentID])
+	if len(params) == 0 {
+		return nil
+	}
+	return dao.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Concurrent PATCH requests must merge against the latest stored config.
+		current, err := s.documentDAO.GetByIDForUpdate(ctx, tx, doc.ID)
+		if err != nil {
+			return err
+		}
+		if current.KbID != doc.KbID || !isArchiveDocument(current) {
+			return gorm.ErrRecordNotFound
+		}
+		return s.documentDAO.UpdateByID(ctx, tx, current.ID, map[string]any{
+			"parser_config": codeArchiveConfig(current.ParserConfig, config),
+		})
+	})
 }
 
 func validateArchiveDocumentUpdate(doc *entity.Document, req *UpdateDatasetDocumentRequest, present map[string]bool) error {

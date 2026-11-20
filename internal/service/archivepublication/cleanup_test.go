@@ -8,6 +8,7 @@ import (
 
 	"gorm.io/gorm"
 	"ragflow/internal/common"
+	"ragflow/internal/dao"
 	"ragflow/internal/entity"
 	"ragflow/internal/ingestion/archiveartifact"
 )
@@ -201,6 +202,76 @@ func TestSweepReclaimsReleasedAttemptWithoutFailingRetryableRun(t *testing.T) {
 	}
 	if err = Publish(t.Context(), db, replacement, artifact(), Counts{Chunks: 1}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSweepSettlesRequestedStop(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		status   string
+		released bool
+	}{
+		{name: "expired", status: common.STOPPING},
+		{name: "released", status: common.STOPPING, released: true},
+		{name: "redelivered", status: common.STOPPED},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			db, scope := publicationDB(t)
+			if err := db.AutoMigrate(&entity.PipelineOperationLog{}, &entity.IngestionTaskLog{}); err != nil {
+				t.Fatal(err)
+			}
+			log := entity.PipelineOperationLog{ID: scope.RunID, DocumentID: scope.DocID, KbID: scope.KBID, OperationStatus: string(entity.TaskStatusRunning)}
+			if err := db.Create(&log).Error; err != nil {
+				t.Fatal(err)
+			}
+			attempt, err := Acquire(ctx, db, scope, time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = taskQuery(db, scope).Update("status", tc.status).Error; err != nil {
+				t.Fatal(err)
+			}
+			if tc.released {
+				if allowed, err := CanCompensate(ctx, db, attempt, context.Canceled); err != nil || !allowed {
+					t.Fatalf("release attempt: allowed=%t err=%v", allowed, err)
+				}
+			} else {
+				expired := time.Now().Add(-time.Hour).UnixMilli()
+				if err = rowQuery(db, attempt).Update("lease_until", expired).Error; err != nil {
+					t.Fatal(err)
+				}
+				if err = attemptQuery(db, attempt).UpdateColumns(map[string]any{"lease_until": expired, "updated_at": expired}).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			remove := func(_ context.Context, got archiveartifact.Scope, _ string) error {
+				if got != attempt {
+					t.Fatalf("wrong attempt to clean: %+v", got)
+				}
+				var task entity.IngestionTask
+				if err := taskQuery(db, scope).Take(&task).Error; err != nil || task.Status != common.STOPPED {
+					t.Fatalf("task before index cleanup: status=%s err=%v", task.Status, err)
+				}
+				var publication entity.DocumentCodeArchive
+				if err := rowQuery(db, attempt).Take(&publication).Error; err != nil || publication.Status != "cancelled" || publication.FailureReason != "" || publication.LeaseUntil != 0 {
+					t.Fatalf("publication before index cleanup: %+v err=%v", publication, err)
+				}
+				return nil
+			}
+			for range 2 {
+				if cleaned, err := Sweep(ctx, db, CleanupOptions{Grace: time.Minute, BatchSize: 10}, remove); err != nil || cleaned != 1 {
+					t.Fatalf("sweep: cleaned=%d err=%v", cleaned, err)
+				}
+			}
+			if err = db.Take(&log, "id = ?", scope.RunID).Error; err != nil || log.OperationStatus != string(entity.TaskStatusCancel) {
+				t.Fatalf("run log: status=%s err=%v", log.OperationStatus, err)
+			}
+			var events int64
+			if err = db.Model(&entity.IngestionTaskLog{}).Where("pipeline_log_id = ? AND event_type = ?", scope.RunID, dao.EventTypeTerminal).Count(&events).Error; err != nil || events != 1 {
+				t.Fatalf("terminal event count=%d err=%v", events, err)
+			}
+		})
 	}
 }
 

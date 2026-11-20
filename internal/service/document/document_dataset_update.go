@@ -268,13 +268,8 @@ func (s *DocumentService) UpdateDatasetDocument(ctx context.Context, datasetID, 
 	}
 
 	parserUpdates := map[string]interface{}{}
-	if isArchiveDocument(doc) {
-		parserUpdates["parser_id"] = "code_archive"
-		parserUpdates["pipeline_id"] = nil
-		parserUpdates["pipeline_version_id"] = nil
-		parserUpdates["parser_config"] = codeArchiveConfig(doc.ParserConfig, req.ParserConfig)
-	}
-	if (sel != nil || hasConfig) && !isArchiveDocument(doc) {
+	archive := isArchiveDocument(doc)
+	if (sel != nil || hasConfig) && !archive {
 		dslJSON, err := service.LoadPipelineDSL(ctx, isPipeline, effParserID, effPipelineID, effectiveVersionID)
 		if err != nil {
 			return nil, common.CodeDataError, err
@@ -350,7 +345,7 @@ func (s *DocumentService) UpdateDatasetDocument(ctx context.Context, datasetID, 
 		}
 	}
 
-	if sel != nil && !isArchiveDocument(doc) {
+	if sel != nil && !archive {
 		if isPipeline {
 			parserUpdates["pipeline_id"] = *effPipelineID
 		} else {
@@ -377,7 +372,11 @@ func (s *DocumentService) UpdateDatasetDocument(ctx context.Context, datasetID, 
 			return nil, common.CodeDataError, err
 		}
 	}
-	if len(parserUpdates) > 0 {
+	if archive && hasConfig {
+		if err = s.patchCodeArchiveConfig(ctx, doc, req.ParserConfig); err != nil {
+			return nil, common.CodeDataError, err
+		}
+	} else if !archive && len(parserUpdates) > 0 {
 		if err = s.documentDAO.UpdateByID(ctx, dao.DB, doc.ID, parserUpdates); err != nil {
 			return nil, common.CodeDataError, err
 		}
@@ -629,30 +628,6 @@ func (s *DocumentService) updateDocumentNameOnly(ctx context.Context, doc *entit
 		indexName,
 		doc.KbID,
 	)
-}
-
-func (s *DocumentService) updateDocumentParserConfig(ctx context.Context, documentID string, config map[string]any) error {
-	if len(config) == 0 {
-		return nil
-	}
-
-	doc, err := s.documentDAO.GetByID(ctx, dao.DB, documentID)
-	if err != nil {
-		return fmt.Errorf("document(%s) not found", documentID)
-	}
-
-	merged := common.DeepMergeMaps(doc.ParserConfig, config)
-	if isArchiveDocument(doc) {
-		if err := service.ValidateCodeArchiveConfig(config); err != nil {
-			return err
-		}
-		merged = codeArchiveConfig(doc.ParserConfig, config)
-	}
-	pipelinepkg.ApplyParentChildChunkerConfig(merged, config)
-
-	return s.documentDAO.UpdateByID(ctx, dao.DB, documentID, map[string]interface{}{
-		"parser_config": entity.JSONMap(merged),
-	})
 }
 
 func (s *DocumentService) toUpdateDatasetDocumentResponse(ctx context.Context, doc *entity.Document, metaFields map[string]interface{}) (*UpdateDatasetDocumentResponse, error) {

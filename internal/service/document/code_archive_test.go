@@ -4,9 +4,13 @@ import (
 	"archive/zip"
 	"bytes"
 	"errors"
+	"fmt"
 	"mime/multipart"
 	"strings"
 	"testing"
+	"time"
+
+	"gorm.io/gorm"
 
 	"ragflow/internal/common"
 	"ragflow/internal/dao"
@@ -73,6 +77,83 @@ func TestArchivePatchAndApplyKeepOnlyArchiveOptions(t *testing.T) {
 	params = doc.ParserConfig["CodeArchive:Archive"].(map[string]any)
 	if doc.ParserID != "code_archive" || doc.PipelineID != nil || doc.PipelineVersionID != nil || len(doc.ParserConfig) != 1 || len(params) != 2 || params["chunk_token_num"] != float64(256) {
 		t.Fatalf("batch=%+v", doc)
+	}
+}
+
+func TestArchiveRenamePreservesConcurrentParserConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		config       map[string]any
+		wantOverview bool
+	}{
+		{name: "only_name"},
+		{name: "empty_config", config: map[string]any{codeArchiveComponentID: map[string]any{}}},
+		{name: "independent_config_keys", config: map[string]any{codeArchiveComponentID: map[string]any{"code_file_overview": true}}, wantOverview: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := setupConcurrentServiceTestDB(t)
+			pushServiceDB(t, db)
+			insertTestKB(t, "kb-1", "tenant-1", 1, 0, 0)
+			insertNamedTestDoc(t, "doc-1", "kb-1", "repo.zip", 0, 0)
+			if err := db.Model(&entity.Document{}).Where("id = ?", "doc-1").Updates(map[string]any{
+				"parser_id": codearchive.ParserID,
+				"parser_config": codeArchiveConfig(entity.JSONMap{codeArchiveComponentID: map[string]any{
+					"chunk_token_num": 512, "code_file_overview": false,
+				}}),
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+			paused, resume := make(chan struct{}), make(chan struct{})
+			const callback = "test:pause_archive_rename"
+			if err := db.Callback().Update().Before("gorm:begin_transaction").Register(callback, func(tx *gorm.DB) {
+				if values, ok := tx.Statement.Dest.(map[string]any); ok && tx.Statement.Table == "document" && values["name"] == "renamed.zip" {
+					close(paused)
+					<-resume
+				}
+			}); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = db.Callback().Update().Remove(callback) })
+			ctx := documentTestContext(t.Context())
+			svc := testDocumentService(t)
+			done := make(chan error, 1)
+			go func() {
+				_, code, err := svc.UpdateDatasetDocument(ctx, "kb-1", "doc-1", &UpdateDatasetDocumentRequest{
+					Name: new("renamed.zip"), ParserConfig: tc.config,
+				}, map[string]bool{"name": true, "parser_config": tc.config != nil})
+				if err == nil && code != common.CodeSuccess {
+					err = fmt.Errorf("rename code=%d", code)
+				}
+				done <- err
+			}()
+			select {
+			case <-paused:
+			case err := <-done:
+				t.Fatalf("rename completed before config update: %v", err)
+			case <-time.After(5 * time.Second):
+				close(resume)
+				<-done
+				t.Fatal("rename did not reach the update callback")
+			}
+			_, code, err := svc.UpdateDatasetDocument(ctx, "kb-1", "doc-1", &UpdateDatasetDocumentRequest{
+				ParserConfig: map[string]any{codeArchiveComponentID: map[string]any{"chunk_token_num": 128}},
+			}, map[string]bool{"parser_config": true})
+			close(resume)
+			if renameErr := <-done; renameErr != nil {
+				t.Fatal(renameErr)
+			}
+			if err != nil || code != common.CodeSuccess {
+				t.Fatalf("config update: code=%d err=%v", code, err)
+			}
+			doc, err := dao.NewDocumentDAO().GetByID(ctx, db, "doc-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			params, _ := nodeParams(doc.ParserConfig[codeArchiveComponentID])
+			if doc.Name == nil || *doc.Name != "renamed.zip" || params["chunk_token_num"] != float64(128) || params["code_file_overview"] != tc.wantOverview {
+				t.Fatalf("rename and config did not both persist: name=%v config=%v", doc.Name, params)
+			}
+		})
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"ragflow/internal/common"
+	"ragflow/internal/dao"
 	"ragflow/internal/entity"
 	"ragflow/internal/ingestion/archiveartifact"
 )
@@ -98,7 +99,8 @@ func claimExpired(ctx context.Context, db *gorm.DB, scope archiveartifact.Scope,
 		if attempt.State == "published" {
 			return nil
 		}
-		current := publication.RunID == scope.RunID && publication.AttemptID == scope.AttemptID
+		current := publication.KBID == scope.KBID && publication.TaskID == scope.TaskID &&
+			publication.RunID == scope.RunID && publication.AttemptID == scope.AttemptID
 		if current && publication.Status == "ready" {
 			return nil
 		}
@@ -110,13 +112,19 @@ func claimExpired(ctx context.Context, db *gorm.DB, scope archiveartifact.Scope,
 				return nil
 			}
 		}
-		// A pending pointer with an old attempt belongs to a released execution;
-		// reclaim its rows without terminally failing the run awaiting redelivery.
-		if current && publication.Status == "running" {
+		sameRun := task.DocumentID == scope.DocID && task.DatasetID == scope.KBID &&
+			task.PipelineLogID != nil && *task.PipelineLogID == scope.RunID
+		stopRequested := sameRun && (task.Status == common.STOPPING || task.Status == common.STOPPED)
+		// A released (pending) attempt can still be redelivered unless the user stopped the run.
+		if current && stopRequested && (publication.Status == "running" || publication.Status == "pending") {
+			if err := settleExpiredStop(ctx, tx, scope); err != nil {
+				return err
+			}
+		} else if current && publication.Status == "running" {
 			if err := one(rowQuery(tx, scope).Updates(map[string]any{"status": "failed", "lease_until": 0})); err != nil {
 				return err
 			}
-			if task.PipelineLogID != nil && *task.PipelineLogID == scope.RunID && task.Status != common.COMPLETED && task.Status != common.STOPPED && task.Status != common.FAILED {
+			if sameRun && task.Status != common.COMPLETED && task.Status != common.FAILED {
 				if err := one(taskQuery(tx, scope).Update("status", common.FAILED)); err != nil {
 					return err
 				}
@@ -134,4 +142,28 @@ func claimExpired(ctx context.Context, db *gorm.DB, scope archiveartifact.Scope,
 		return nil
 	})
 	return allowed, err
+}
+
+// settleExpiredStop runs with the task and its current publication locked.
+func settleExpiredStop(ctx context.Context, tx *gorm.DB, scope archiveartifact.Scope) error {
+	if err := one(rowQuery(tx, scope).Updates(map[string]any{"status": "cancelled", "failure_reason": "", "lease_until": 0})); err != nil {
+		return err
+	}
+	if err := taskQuery(tx, scope).Where("status = ?", common.STOPPING).Update("status", common.STOPPED).Error; err != nil {
+		return err
+	}
+	if err := tx.Model(&entity.Document{}).Where("id = ? AND kb_id = ?", scope.DocID, scope.KBID).Update("progress", -1).Error; err != nil {
+		return err
+	}
+	advanced, err := dao.NewPipelineOperationLogDAO().AdvanceOpenLog(ctx, tx, scope.RunID, dao.OpenPipelineOperationStatuses(), string(entity.TaskStatusCancel))
+	if err != nil || !advanced {
+		return err
+	}
+	return dao.NewIngestionTaskLogDAO().Create(ctx, tx, &entity.IngestionTaskLog{
+		TaskID:        scope.TaskID,
+		PipelineLogID: &scope.RunID,
+		Checkpoint:    entity.JSONMap{},
+		EventType:     dao.EventTypeTerminal,
+		Message:       "Task stopped by user.",
+	})
 }
