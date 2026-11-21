@@ -1,6 +1,7 @@
 package codearchive
 
 import (
+	"bytes"
 	"path"
 	"slices"
 	"sort"
@@ -97,7 +98,7 @@ func loadIgnore(entries []entry, budget *readerBudget, policy Policy) (*ignoreMa
 	limits := policy.Limits
 	var rules []entry
 	for _, e := range entries {
-		if !e.file.FileInfo().IsDir() && path.Base(e.path) == ".gitignore" {
+		if !e.directory && path.Base(e.path) == ".gitignore" {
 			rules = append(rules, e)
 		}
 	}
@@ -123,14 +124,17 @@ func loadIgnore(entries []entry, budget *readerBudget, policy Policy) (*ignoreMa
 		if err != nil {
 			return nil, err
 		}
-		text, ok := decode(raw)
-		if !ok {
-			return nil, fail("ZIP_PARSE_FAILED")
-		}
 		if dir == "." {
 			dir = ""
 		}
-		for _, line := range strings.Split(text, "\n") {
+		// Git terminates a rule at its first NUL. Decode lines independently
+		// so one invalid rule cannot discard unrelated rules or source files.
+		for _, rawLine := range bytes.Split(bytes.ReplaceAll(raw, []byte{'\r'}, []byte{'\n'}), []byte{'\n'}) {
+			rawLine, _, _ = bytes.Cut(rawLine, []byte{0})
+			line, ok := decode(rawLine)
+			if !ok {
+				continue
+			}
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}

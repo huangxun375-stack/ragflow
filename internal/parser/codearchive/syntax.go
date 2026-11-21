@@ -222,7 +222,11 @@ func analyzeLanguage(ctx context.Context, language, text string, errorRatio floa
 				if kind == "type_definition" {
 					if body := declarationBody(n); body != nil {
 						owner := typedefMemberName(n)
-						return walk(body, qualifiedSymbolName(owner, source, scope))
+						memberScope := scope
+						if owner != nil {
+							memberScope = qualifiedSymbolName(owner, source, scope)
+						}
+						return walk(body, memberScope)
 					}
 				}
 				if !containerDeclaration(kind) {

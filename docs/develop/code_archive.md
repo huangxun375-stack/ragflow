@@ -219,8 +219,15 @@ The default policy respects nested `.gitignore` rules. Setting
 `respect_gitignore: false` skips rule-file reads and matching. Oversized rule
 files are skipped using their directory metadata; bytes actually read from
 other rule files count toward the same total decompression budget as source
-files. Matching cannot reinclude a file excluded by the fixed directory or
+files. Rules are decoded one line at a time. A NUL terminates its line's
+pattern, following Git's behavior; undecodable lines are skipped while valid
+rules continue to apply. Matching cannot reinclude a file excluded by the fixed directory or
 language/extension policy.
+
+Empty directory entries ending in either slash style are recognized, including
+PowerShell 5.1 backslash entries without a directory attribute. A safe relative
+root entry such as `./` is omitted from the tree. These entries still undergo
+type, encryption, format and path checks before they are treated as directories.
 
 The tree's `root_name` uses the common top-level directory when all remaining
 members share one, after excluding Mac metadata. Otherwise it uses the ZIP
@@ -259,6 +266,10 @@ and are merged to a target length:
   whose starting syntax node is shallowest in the AST, never after a
   comment-only line or before a continuation token. Without a candidate the
   longest fitting prefix is kept.
+- Whitespace is assigned to neighboring nonblank chunks. If preserving a
+  fitting declaration makes the complete source unrepresentable at a budget
+  boundary, the declaration may be split as a final fallback. The full input
+  including its source header is checked again for both token budgets.
 - Syntax errors fall back to line-based chunking when the union of
   error-covered source lines exceeds `syntax_error_ratio` of the file's lines.
   Repeated errors on one line count once; long valid lines do not dilute the

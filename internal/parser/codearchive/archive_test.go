@@ -48,6 +48,67 @@ func options() Options {
 		CountTokens: utf8.RuneCountInString, FitsEmbedding: func(s string) bool { return utf8.RuneCountInString(s) <= 1024 }}
 }
 
+func TestPortableDirectoryEntries(t *testing.T) {
+	const source = "def main():\n    return 1\n"
+	for _, directories := range [][]member{
+		{{name: "src\\"}, {name: "src\\empty\\"}},
+		{{name: "./"}, {name: "./src/"}},
+		{{name: ".\\"}, {name: ".\\src\\"}},
+	} {
+		t.Run(directories[0].name, func(t *testing.T) {
+			members := append(directories, member{name: "./src/main.py", text: source})
+			blob := archive(t, members...)
+			if err := Precheck(blob, DefaultLimits()); err != nil {
+				t.Fatal(err)
+			}
+			opts := options()
+			result, err := Process(t.Context(), blob, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertLosslessNonblankChunks(t, result, source, opts)
+			if result.Stats.TotalFiles != 1 || result.Stats.AcceptedFiles != 1 || result.Chunks[0].SourcePath != "src/main.py" {
+				t.Fatalf("directory entries became files: %+v", result)
+			}
+		})
+	}
+}
+
+func TestPortableDirectoriesStillRequireSafeMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		member
+		reason string
+	}{
+		{member{name: "..\\"}, "ZIP_UNSAFE_PATH"},
+		{member{name: ".\\..\\"}, "ZIP_UNSAFE_PATH"},
+		{member{name: "\\src\\"}, "ZIP_UNSAFE_PATH"},
+		{member{name: "./", mode: os.ModeSymlink | 0777}, "ZIP_UNSAFE_PATH"},
+		{member{name: "src\\", text: "payload"}, "ZIP_CORRUPTED"},
+		{member{name: ""}, "ZIP_UNSAFE_PATH"},
+	} {
+		blob := archive(t, tc.member, member{name: "main.py", text: "pass\n"})
+		if err := Precheck(blob, DefaultLimits()); Reason(err) != tc.reason {
+			t.Errorf("directory %q: %v, want %s", tc.name, err, tc.reason)
+		}
+	}
+}
+
+func TestGitignoreNULTerminatesOnlyItsRule(t *testing.T) {
+	members := []member{
+		{name: ".gitignore", text: "drop.py\nIcon\x00\x00\nignored.py\x00junk\n\xff\n"},
+		{name: "main.py", text: "pass\n"},
+		{name: "drop.py", text: "pass\n"},
+		{name: "ignored.py", text: "pass\n"},
+	}
+	result, err := Process(t.Context(), archive(t, members...), options())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Stats.AcceptedFiles != 1 || result.Stats.SkippedGitignore != 2 || len(result.Chunks) != 1 || result.Chunks[0].SourcePath != "main.py" {
+		t.Fatalf("invalid line discarded valid rules: %+v", result)
+	}
+}
+
 func TestPrecheckRejectsUnsafeMembersBeforeFiltering(t *testing.T) {
 	for _, name := range []string{"ignored/../../escape.py", "node_modules/../x.py", `..\x.py`, "/x.py", `C:\x.py`, `\\host\x.py`, "a\x00.py", "src/a\nb.py", "x:stream.py"} {
 		t.Run(name, func(t *testing.T) {

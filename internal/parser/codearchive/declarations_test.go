@@ -295,6 +295,7 @@ func TestChunkSymbolsPreserveDeclarationScope(t *testing.T) {
 		{"array.hpp", "typedef struct Widget { void run() {} } Widgets[2];\n", []string{"Widgets", "Widget.run"}},
 		{"parenthesized.hpp", "typedef struct Widget { void run() {} } (Worker);\n", []string{"Worker", "Worker.run"}},
 		{"nested.hpp", "struct Outer { typedef struct Widget { void run() {} } *Handle; };\n", []string{"Outer", "Outer.Handle", "Outer.Widget.run"}},
+		{"anonymous_nested.hpp", "struct Outer { typedef struct { void run() {} } *Handle; };\n", []string{"Outer", "Outer.Handle", "Outer.run"}},
 		{"status.hpp", "typedef int Status;\n", []string{"Status"}},
 	} {
 		t.Run(tc.path, func(t *testing.T) {

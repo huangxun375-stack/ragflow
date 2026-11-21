@@ -19,11 +19,12 @@ import (
 )
 
 type entry struct {
-	file *zip.File
-	path string
+	file      *zip.File
+	path      string
+	directory bool
 }
 
-func safePath(name string, depth int) (string, error) {
+func safePath(name string, depth int, directory bool) (string, error) {
 	if !utf8.ValidString(name) {
 		return "", fail("ZIP_UNSAFE_PATH")
 	}
@@ -42,7 +43,7 @@ func safePath(name string, depth int) (string, error) {
 		}
 	}
 	clean := path.Clean(name)
-	if clean == "." || clean == "" {
+	if clean == "." && (!directory || name == "") || clean == "" {
 		return "", fail("ZIP_UNSAFE_PATH")
 	}
 	if len(strings.Split(clean, "/")) > depth {
@@ -161,28 +162,38 @@ func inspect(ctx context.Context, blob []byte, limits Limits) ([]entry, error) {
 		if err != nil {
 			return nil, err
 		}
-		name, err := safePath(decodedName, limits.MaxDepth)
+		if f.Mode()&os.ModeSymlink != 0 || (!f.Mode().IsRegular() && !f.Mode().IsDir()) {
+			return nil, fail("ZIP_UNSAFE_PATH")
+		}
+		// PowerShell 5.1 emits empty directory entries with backslash names
+		// and no directory attribute. Keep the raw ZIP name for header checks.
+		directory := f.Mode().IsDir() || strings.HasSuffix(decodedName, "/") || strings.HasSuffix(decodedName, "\\")
+		if directory && f.UncompressedSize64 != 0 {
+			return nil, fail("ZIP_CORRUPTED")
+		}
+		name, err := safePath(decodedName, limits.MaxDepth, directory)
 		if err != nil {
 			return nil, err
 		}
-		if f.Mode()&os.ModeSymlink != 0 || (!f.Mode().IsRegular() && !f.Mode().IsDir()) {
-			return nil, fail("ZIP_UNSAFE_PATH")
+		if err := checkLocalHeader(blob, f); err != nil {
+			return nil, err
+		}
+		// A relative root directory is metadata rather than a source-tree node.
+		if name == "." {
+			continue
 		}
 		folded := strings.ToLower(name)
 		if _, exists := seen[folded]; exists {
 			return nil, fail("ZIP_UNSAFE_PATH")
 		}
-		seen[folded] = f.FileInfo().IsDir()
-		if !f.FileInfo().IsDir() {
+		seen[folded] = directory
+		if !directory {
 			files++
 			if files > limits.MaxFiles {
 				return nil, fail("ZIP_TOO_MANY_FILES")
 			}
 		}
-		if err := checkLocalHeader(blob, f); err != nil {
-			return nil, err
-		}
-		entries = append(entries, entry{file: f, path: name})
+		entries = append(entries, entry{file: f, path: name, directory: directory})
 	}
 	for name := range seen {
 		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {

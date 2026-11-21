@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"ragflow/internal/tokenizer"
 )
 
 func assertLosslessNonblankChunks(t *testing.T, result Result, source string, opts Options) {
@@ -84,6 +86,28 @@ func TestArchiveRedistributesTrailingWhitespaceByMovingRuneBoundary(t *testing.T
 	result, err = Process(t.Context(), archive(t, member{"a.py", source, 0}), opts)
 	if Reason(err) != "ZIP_TOO_MANY_CHUNKS" || len(result.Chunks) != 0 {
 		t.Fatalf("redistribution bypassed chunk limit: chunks=%d err=%v", len(result.Chunks), err)
+	}
+}
+
+func TestArchiveBudgetBoundaryRetainsTrailingWhitespace(t *testing.T) {
+	for _, tc := range []struct {
+		budget, lines, padding int
+	}{
+		{128, 12, 0}, {128, 12, 7}, {512, 44, 7}, {512, 66, 7},
+	} {
+		t.Run(fmt.Sprintf("%d/%d/%d", tc.budget, tc.lines, tc.padding), func(t *testing.T) {
+			source := "export function handler(value: number): number {\n" +
+				strings.Repeat("  value = value + 1;\n", tc.lines) +
+				"  return value;\n}" + strings.Repeat(" ", tc.padding) + "\n"
+			opts := options()
+			opts.ChunkTokens = tc.budget
+			opts.CountTokens = tokenizer.NumTokensFromString
+			result, err := Process(t.Context(), archive(t, member{"src/a.ts", source, 0}), opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertLosslessNonblankChunks(t, result, source, opts)
+		})
 	}
 }
 

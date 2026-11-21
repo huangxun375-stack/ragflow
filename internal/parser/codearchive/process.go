@@ -45,7 +45,7 @@ func Process(ctx context.Context, blob []byte, opts Options) (Result, error) {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
-		if e.file.FileInfo().IsDir() {
+		if e.directory {
 			continue
 		}
 		result.Stats.TotalFiles++
@@ -185,7 +185,7 @@ func archiveRootName(entries []entry, filename string) string {
 			continue
 		}
 		top, _, nested := strings.Cut(e.path, "/")
-		if (!nested && !e.file.FileInfo().IsDir()) || (common != "" && common != top) {
+		if (!nested && !e.directory) || (common != "" && common != top) {
 			common = ""
 			break
 		}
@@ -203,7 +203,7 @@ func archiveRootName(entries []entry, filename string) string {
 }
 
 func validateTransform(original, transformed SourceFile, limits Limits) error {
-	clean, err := safePath(transformed.Path, limits.MaxDepth)
+	clean, err := safePath(transformed.Path, limits.MaxDepth, false)
 	if err != nil || clean != transformed.Path {
 		return fail("ZIP_UNSAFE_PATH")
 	}

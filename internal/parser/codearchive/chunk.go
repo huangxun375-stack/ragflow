@@ -300,7 +300,7 @@ func (b *chunkBuilder) stage(s byteSpan, part int) error {
 }
 
 // finishSource only changes boundaries: every byte still occurs exactly once.
-// Fitting syntax units are protected even if whitespace needs redistribution.
+// Prefer intact syntax units when assigning whitespace to neighboring chunks.
 // Some inputs cannot meet all three constraints (lossless, nonblank, bounded);
 // fail atomically rather than dropping whitespace or exceeding either budget.
 func (b *chunkBuilder) finishSource(candidates []byteSpan) error {
@@ -338,28 +338,33 @@ func (b *chunkBuilder) finishSource(candidates []byteSpan) error {
 				continue
 			}
 		}
-		// If a long-line fragment filled its budget, make room for adjacent
-		// whitespace by splitting that fragment, never a fitting declaration.
+		// First preserve every fitting declaration. If that cannot place the
+		// whitespace, split a neighboring declaration as a final fallback.
 		repaired := false
-		for _, neighbor := range []int{written - 1, i + 1} {
-			if neighbor < 0 || neighbor >= len(b.source) {
-				continue
+		for _, protected := range [][]byteSpan{candidates, nil} {
+			for _, neighbor := range []int{written - 1, i + 1} {
+				if neighbor < 0 || neighbor >= len(b.source) {
+					continue
+				}
+				p := b.source[neighbor]
+				left, right := p, p
+				left.start, right.end = min(p.start, gap.start), max(p.end, gap.end)
+				if a, z, ok := b.rebalance(left, right, p.start, p.end, protected); ok {
+					if len(b.result.Chunks)+b.stagedChunks >= b.opts.Policy.Limits.MaxChunks {
+						return fail("ZIP_TOO_MANY_CHUNKS")
+					}
+					b.stagedChunks++
+					if neighbor == written-1 {
+						b.source[neighbor], b.source[written] = a, z
+					} else {
+						b.source[written], b.source[neighbor] = a, z
+					}
+					written++
+					repaired = true
+					break
+				}
 			}
-			p := b.source[neighbor]
-			left, right := p, p
-			left.start, right.end = min(p.start, gap.start), max(p.end, gap.end)
-			if a, z, ok := b.rebalance(left, right, p.start, p.end, candidates); ok {
-				if len(b.result.Chunks)+b.stagedChunks >= b.opts.Policy.Limits.MaxChunks {
-					return fail("ZIP_TOO_MANY_CHUNKS")
-				}
-				b.stagedChunks++
-				if neighbor == written-1 {
-					b.source[neighbor], b.source[written] = a, z
-				} else {
-					b.source[written], b.source[neighbor] = a, z
-				}
-				written++
-				repaired = true
+			if repaired {
 				break
 			}
 		}

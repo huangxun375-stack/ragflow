@@ -47,7 +47,7 @@ func (p Policy) Validate() error {
 		}
 	}
 	for _, dir := range p.IgnoredDirs {
-		clean, err := safePath(dir, 1)
+		clean, err := safePath(dir, 1, false)
 		if err != nil || clean != dir || strings.ContainsAny(dir, "/*?[]") {
 			return fail("ZIP_CONFIG_INVALID")
 		}
