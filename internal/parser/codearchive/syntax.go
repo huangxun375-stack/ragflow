@@ -209,6 +209,10 @@ func analyzeLanguage(ctx context.Context, language, text string, errorRatio floa
 		if expressionCallable(n) {
 			return nil
 		}
+		if classInitializer(n) {
+			parsed.spans = append(parsed.spans, completeSpan(n, source))
+			return nil
+		}
 		if kind == "field_declaration" && !containsCallable(n) {
 			return nil
 		}
@@ -298,9 +302,10 @@ func declarationKind(kind string) bool {
 	switch kind {
 	case "function_definition", "function_declaration", "generator_function_declaration", "method_declaration", "class_definition",
 		"class_declaration", "abstract_class_declaration", "method_definition", "interface_declaration", "enum_declaration",
-		"type_alias_declaration", "record_declaration", "constructor_declaration", "namespace_definition",
+		"type_alias_declaration", "alias_declaration", "record_declaration", "constructor_declaration", "compact_constructor_declaration", "namespace_definition",
 		"class_specifier", "struct_specifier", "enum_specifier", "union_specifier", "type_spec", "type_alias",
 		"variable_declarator", "function_declaration_statement", "function_declarator", "type_definition",
+		"function_signature", "annotation_type_declaration", "annotation_type_element_declaration",
 		"method_signature", "abstract_method_signature", "method_elem", "public_field_definition", "field_definition":
 		return true
 	}
@@ -342,7 +347,7 @@ func completeSpan(n *ts.Node, source []byte) byteSpan {
 			} else {
 				n = parent
 			}
-		case "decorated_definition", "export_statement", "template_declaration", "lexical_declaration",
+		case "decorated_definition", "export_statement", "ambient_declaration", "template_declaration", "lexical_declaration",
 			"variable_declaration", "declaration", "field_declaration":
 			n = parent
 		default:

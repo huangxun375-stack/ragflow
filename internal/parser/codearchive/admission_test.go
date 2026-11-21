@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -145,6 +146,30 @@ func TestArchiveAdmissionSingleVolumeZIP64(t *testing.T) {
 	}
 	if _, err := Process(t.Context(), blob, options()); err != nil {
 		t.Fatal(err)
+	}
+	for mask := 1; mask < 8; mask++ {
+		t.Run(fmt.Sprintf("sentinels_%03b", mask), func(t *testing.T) {
+			endRecord := bytes.Clone(plain[end:])
+			if mask&1 != 0 {
+				le.PutUint16(endRecord[8:], 0xffff)
+				le.PutUint16(endRecord[10:], 0xffff)
+			}
+			if mask&2 != 0 {
+				le.PutUint32(endRecord[12:], 0xffffffff)
+			}
+			if mask&4 != 0 {
+				le.PutUint32(endRecord[16:], 0xffffffff)
+			}
+			variant := append(bytes.Clone(plain[:end]), record...)
+			variant = append(variant, locator...)
+			variant = append(variant, endRecord...)
+			if err := Precheck(variant, DefaultLimits()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Process(t.Context(), variant, options()); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 	for _, offset := range []int{end + 16, end + 20, end + 24, end + 56 + 4, end + 56 + 16} {
 		corrupt := bytes.Clone(blob)

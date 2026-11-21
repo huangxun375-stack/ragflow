@@ -49,8 +49,14 @@ func TestCDeclaratorStatementRanges(t *testing.T) {
 				if got := source[s.start:s.end]; got != doc+tc.declaration {
 					t.Errorf("%s range = %q, want the documented declaration", s.name, got)
 				}
-				if s.signature != tc.declaration {
-					t.Errorf("%s signature = %q, want %q", s.name, s.signature, tc.declaration)
+				wantSignature := tc.declaration
+				if tc.name == "c_multiple" {
+					wantSignature = "int *" + s.name + "(void);"
+				} else if tc.name == "cpp_multiple" {
+					wantSignature = "Item *" + s.name + "();"
+				}
+				if s.signature != wantSignature {
+					t.Errorf("%s signature = %q, want %q", s.name, s.signature, wantSignature)
 				}
 				if s.doc != "Declaration documentation." {
 					t.Errorf("%s documentation = %q", s.name, s.doc)

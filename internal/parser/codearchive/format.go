@@ -36,7 +36,7 @@ func checkArchiveFormat(blob []byte) (uint64, error) {
 	count := uint64(le.Uint16(eocd[10:]))
 	size, offset := uint64(le.Uint32(eocd[12:])), uint64(le.Uint32(eocd[16:]))
 	directoryEnd := uint64(end)
-	zip64 := count == 0xffff || size == 0xffff || offset == 0xffffffff
+	zip64 := count == 0xffff || size == 0xffffffff || offset == 0xffffffff
 	hasLocator := end >= 20 && le.Uint32(blob[end-20:]) == 0x07064b50
 	if hasLocator && !zip64 {
 		return invalid()

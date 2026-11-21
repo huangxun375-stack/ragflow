@@ -1,6 +1,7 @@
 package codearchive
 
 import (
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -22,6 +23,7 @@ func declarationSymbol(n *ts.Node, source []byte, scope string) (symbol, bool) {
 	}
 	name := qualifiedSymbolName(nameNode, source, scope)
 	body := declarationBody(n)
+	declarator := n
 	if kind == "function_declarator" {
 		n = declarationOwner(n)
 	}
@@ -30,7 +32,13 @@ func declarationSymbol(n *ts.Node, source []byte, scope string) (symbol, bool) {
 	if body != nil {
 		end = int(body.StartByte())
 	}
-	signature := compactLine(string(source[int(n.StartByte()):end]), 240)
+	var signature string
+	if kind == "function_declarator" {
+		signature = declaratorSignature(declarator, n, source)
+	} else {
+		signature = signatureText(n, source, int(n.StartByte()), end)
+	}
+	signature = compactLine(signature, 240)
 	doc := ""
 	if unit.start < int(n.StartByte()) {
 		prefix := strings.TrimSpace(string(source[unit.start:int(n.StartByte())]))
@@ -62,11 +70,100 @@ func declarationOwner(n *ts.Node) *ts.Node {
 		case "pointer_declarator", "reference_declarator", "parenthesized_declarator",
 			"array_declarator", "attributed_declarator", "function_declarator":
 			continue
+		case "init_declarator":
+			child := parent.ChildByFieldName("declarator")
+			if child == nil || child.StartByte() > n.StartByte() || child.EndByte() < n.EndByte() {
+				return n
+			}
 		default:
 			return n
 		}
 	}
 	return n
+}
+
+// The statement owns the source unit; each declarator owns its overview entry.
+func declaratorSignature(n, owner *ts.Node, source []byte) string {
+	var first, selected *ts.Node
+	for i := uint(0); i < owner.NamedChildCount(); i++ {
+		if owner.FieldNameForNamedChild(uint32(i)) != "declarator" {
+			continue
+		}
+		child := owner.NamedChild(i)
+		if first == nil {
+			first = child
+		}
+		if child.StartByte() <= n.StartByte() && child.EndByte() >= n.EndByte() {
+			selected = child
+		}
+	}
+	if first == nil || selected == nil {
+		return signatureText(n, source, int(n.StartByte()), int(n.EndByte()))
+	}
+	if selected.Kind() == "init_declarator" {
+		selected = selected.ChildByFieldName("declarator")
+	}
+	text := signatureText(owner, source, int(owner.StartByte()), int(first.StartByte())) +
+		signatureText(selected, source, int(selected.StartByte()), int(selected.EndByte()))
+	if value := owner.ChildByFieldName("default_value"); value != nil && value.Kind() == "number_literal" && value.Utf8Text(source) == "0" {
+		text += " = 0"
+	}
+	if owner.EndByte() > 0 && source[owner.EndByte()-1] == ';' {
+		text += ";"
+	}
+	return text
+}
+
+// Default arguments and inline return types may themselves contain callables.
+// Their bodies are source, but are never part of a structural signature.
+func signatureText(root *ts.Node, source []byte, start, end int) string {
+	var bodies []byteSpan
+	var visit func(*ts.Node)
+	visit = func(n *ts.Node) {
+		if int(n.EndByte()) <= start || int(n.StartByte()) >= end {
+			return
+		}
+		var excluded byteSpan
+		if body := declarationBody(n); body != nil {
+			kind := body.Kind()
+			if expressionCallable(n) || kind == "block" || kind == "compound_statement" || kind == "statement_block" || kind == "constructor_body" {
+				span := byteSpan{int(body.StartByte()), int(body.EndByte())}
+				if span.start >= start && span.start < span.end && span.end <= end {
+					bodies = append(bodies, span)
+					excluded = span
+				}
+			}
+		}
+		for i := uint(0); i < n.NamedChildCount(); i++ {
+			child := n.NamedChild(i)
+			if excluded.start < excluded.end && int(child.StartByte()) >= excluded.start && int(child.EndByte()) <= excluded.end {
+				continue
+			}
+			visit(child)
+		}
+	}
+	visit(root)
+	sort.Slice(bodies, func(i, j int) bool {
+		if bodies[i].start == bodies[j].start {
+			return bodies[i].end > bodies[j].end
+		}
+		return bodies[i].start < bodies[j].start
+	})
+	var text strings.Builder
+	for _, body := range bodies {
+		if body.start < start {
+			continue
+		}
+		text.Write(source[start:body.start])
+		if source[body.start] == '{' {
+			text.WriteString("{ … }")
+		} else {
+			text.WriteString("…")
+		}
+		start = body.end
+	}
+	text.Write(source[start:end])
+	return text.String()
 }
 
 func qualifiedSymbolName(node *ts.Node, source []byte, scope string) string {
@@ -179,8 +276,19 @@ func containsCallable(n *ts.Node) bool {
 func containerDeclaration(kind string) bool {
 	switch kind {
 	case "class_definition", "class_declaration", "abstract_class_declaration", "interface_declaration", "enum_declaration", "record_declaration",
-		"namespace_definition", "class_specifier", "struct_specifier", "enum_specifier", "union_specifier", "type_spec":
+		"namespace_definition", "class_specifier", "struct_specifier", "enum_specifier", "union_specifier", "type_spec", "type_alias", "annotation_type_declaration":
 		return true
+	}
+	return false
+}
+
+func classInitializer(n *ts.Node) bool {
+	switch n.Kind() {
+	case "static_initializer", "class_static_block":
+		return true
+	case "block":
+		parent := n.Parent()
+		return parent != nil && parent.Kind() == "class_body"
 	}
 	return false
 }
