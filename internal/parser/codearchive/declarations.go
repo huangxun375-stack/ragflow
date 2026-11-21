@@ -21,9 +21,13 @@ func declarationSymbol(n *ts.Node, source []byte, scope string) (symbol, bool) {
 		}
 	}
 	name := qualifiedSymbolName(nameNode, source, scope)
+	body := declarationBody(n)
+	if kind == "function_declarator" {
+		n = declarationOwner(n)
+	}
 	unit := completeSpan(n, source)
 	end := int(n.EndByte())
-	if body := declarationBody(n); body != nil {
+	if body != nil {
 		end = int(body.StartByte())
 	}
 	signature := compactLine(string(source[int(n.StartByte()):end]), 240)
@@ -46,6 +50,23 @@ func declarationSymbol(n *ts.Node, source []byte, scope string) (symbol, bool) {
 		}
 	}
 	return symbol{name: name, kind: kind, start: unit.start, end: unit.end, signature: signature, doc: doc}, true
+}
+
+// C/C++ function declarators can sit below pointer or reference wrappers.
+// Resolve their owning statement without crossing parameters or initializers.
+func declarationOwner(n *ts.Node) *ts.Node {
+	for parent := n.Parent(); parent != nil; parent = parent.Parent() {
+		switch parent.Kind() {
+		case "declaration", "field_declaration":
+			return parent
+		case "pointer_declarator", "reference_declarator", "parenthesized_declarator",
+			"array_declarator", "attributed_declarator", "function_declarator":
+			continue
+		default:
+			return n
+		}
+	}
+	return n
 }
 
 func qualifiedSymbolName(node *ts.Node, source []byte, scope string) string {
