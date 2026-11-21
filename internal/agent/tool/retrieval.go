@@ -561,6 +561,13 @@ func referenceChunksFromRetrieval(chunks []RetrievalChunk) []map[string]any {
 			chunk["positions"] = c.Positions
 			chunk["position_int"] = c.Positions
 		}
+		if c.SourcePath != "" {
+			chunk["source_path"] = c.SourcePath
+			chunk["start_line"] = c.StartLine
+			chunk["end_line"] = c.EndLine
+			chunk["code_lang"] = c.CodeLanguage
+			chunk["archive_run_id"] = c.ArchiveRunID
+		}
 		out = append(out, chunk)
 	}
 	return out

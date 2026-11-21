@@ -26,9 +26,17 @@ func (s *DocumentService) setArchiveDocumentStatus(ctx context.Context, doc *ent
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND kb_id = ?", doc.ID, kb.ID).Take(&current).Error; err != nil {
 			return err
 		}
-		if err := s.documentDAO.UpdateByID(ctx, tx, doc.ID, map[string]any{"status": statusText}); err != nil {
-			return err
+		switch {
+		case current.Status == nil || *current.Status != statusText:
+			if err := s.documentDAO.UpdateByID(ctx, tx, doc.ID, map[string]any{"status": statusText}); err != nil {
+				return err
+			}
+		case status == 1:
+			// An already-enabled document can contain individually disabled chunks.
+			return nil
 		}
+		// Reassert a disable in ES even when SQL already records it: a prior
+		// enable may have reached ES before its acknowledgement was lost.
 		generations, err := archivepublication.VisibleGenerations(ctx, tx, []string{kb.ID}, []string{doc.ID})
 		if err != nil {
 			return err

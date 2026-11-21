@@ -1137,6 +1137,53 @@ func TestGetAgentSessionServiceSuccess(t *testing.T) {
 
 }
 
+func TestAgentSessionHistoryPreservesArchiveCitation(t *testing.T) {
+	setupAgentSessionServiceTest(t)
+	createAgentSessionTestCanvas(t, "canvas-1", "user-1")
+	createAgentSessionTestConversation(t, "session-1", "canvas-1", "user-1", 1000)
+	ctx := serviceTestContext(t, "user-1", "user-1")
+	svc := NewAgentService()
+	reference := map[string]any{"chunks": []any{map[string]any{
+		"id": "chunk", "document_id": "doc", "source_path": "src/reader.go", "start_line": 5, "end_line": 7,
+		"code_lang": "go", "archive_run_id": "run-1", "archive_attempt_kwd": "private",
+	}}}
+	if err := svc.persistAgentRunSession(ctx, "canvas-1", "session-1", "answer-id", nil, "answer", "", reference, nil, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	detail, code, err := svc.GetAgentSession(ctx, "canvas-1", "session-1", false, dao.ConversationHistoryOptions{IncludeReference: true})
+	if err != nil || code != common.CodeSuccess {
+		t.Fatalf("session detail: code=%v err=%v", code, err)
+	}
+	list, code, err := svc.ListAgentSessions(ctx, "canvas-1", ListAgentSessionsRequest{SessionID: "session-1", Page: 1, PageSize: 10, IncludeReference: true})
+	if err != nil || code != common.CodeSuccess || len(list.Data) != 1 {
+		t.Fatalf("session list: code=%v err=%v response=%+v", code, err, list)
+	}
+	listMessages, err := json.Marshal(list.Data[0]["message"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for label, raw := range map[string]json.RawMessage{"detail": detail.Message, "list": listMessages} {
+		messages := parseMessages(raw)
+		if len(messages) != 2 {
+			t.Fatalf("%s: got %d messages, want 2", label, len(messages))
+		}
+		ref, _ := messages[1]["reference"].(map[string]any)
+		chunks, _ := ref["chunks"].([]any)
+		if len(chunks) != 1 {
+			t.Fatalf("%s: expected one citation, got %v", label, ref)
+		}
+		citation, _ := chunks[0].(map[string]any)
+		for key, want := range map[string]any{"source_path": "src/reader.go", "start_line": 5.0, "end_line": 7.0, "code_lang": "go", "archive_run_id": "run-1"} {
+			if got := citation[key]; got != want {
+				t.Errorf("%s: %s = %v, want %v", label, key, got, want)
+			}
+		}
+		if _, exists := citation["archive_attempt_kwd"]; exists {
+			t.Errorf("%s: internal attempt leaked into citation", label)
+		}
+	}
+}
+
 // TestCreateAgentSessionLeavesVersionTitleNilWithVersions pins the
 // log-truthfulness rule: a session created against the draft DSL must
 // not be stamped with a version title, even when version rows exist —

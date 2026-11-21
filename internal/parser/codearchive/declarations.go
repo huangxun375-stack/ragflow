@@ -12,7 +12,6 @@ func declarationSymbol(n *ts.Node, source []byte, scope string) (symbol, bool) {
 	if nameNode == nil {
 		return symbol{}, false
 	}
-	name := strings.Join(strings.Fields(nameNode.Utf8Text(source)), " ")
 	kind := n.Kind()
 	if kind == "method_declaration" {
 		if receiver := n.ChildByFieldName("receiver"); receiver != nil {
@@ -21,10 +20,7 @@ func declarationSymbol(n *ts.Node, source []byte, scope string) (symbol, bool) {
 			}
 		}
 	}
-	name = strings.ReplaceAll(name, "::", ".")
-	if scope != "" && !strings.HasPrefix(name, scope+".") {
-		name = scope + "." + name
-	}
+	name := qualifiedSymbolName(nameNode, source, scope)
 	unit := completeSpan(n, source)
 	end := int(n.EndByte())
 	if body := declarationBody(n); body != nil {
@@ -50,6 +46,40 @@ func declarationSymbol(n *ts.Node, source []byte, scope string) (symbol, bool) {
 		}
 	}
 	return symbol{name: name, kind: kind, start: unit.start, end: unit.end, signature: signature, doc: doc}, true
+}
+
+func qualifiedSymbolName(node *ts.Node, source []byte, scope string) string {
+	if node == nil {
+		return ""
+	}
+	name := strings.ReplaceAll(strings.Join(strings.Fields(node.Utf8Text(source)), " "), "::", ".")
+	if scope != "" && !strings.HasPrefix(name, scope+".") {
+		return scope + "." + name
+	}
+	return name
+}
+
+func unwrapDeclarator(n *ts.Node) *ts.Node {
+	for n.Kind() == "parenthesized_declarator" && n.NamedChildCount() == 1 {
+		n = n.NamedChild(0)
+	}
+	return n
+}
+
+// A direct alias names the aggregate itself. Pointer and array aliases do not
+// own its methods; use the tag, or leave the members unqualified if anonymous.
+func typedefMemberName(n *ts.Node) *ts.Node {
+	for i := uint(0); i < n.NamedChildCount(); i++ {
+		if n.FieldNameForNamedChild(uint32(i)) == "declarator" {
+			if d := unwrapDeclarator(n.NamedChild(i)); d.Kind() == "type_identifier" {
+				return d
+			}
+		}
+	}
+	if typ := n.ChildByFieldName("type"); typ != nil {
+		return typ.ChildByFieldName("name")
+	}
+	return nil
 }
 
 func receiverType(n *ts.Node, source []byte) string {
@@ -127,7 +157,7 @@ func containsCallable(n *ts.Node) bool {
 
 func containerDeclaration(kind string) bool {
 	switch kind {
-	case "class_definition", "class_declaration", "interface_declaration", "enum_declaration", "record_declaration",
+	case "class_definition", "class_declaration", "abstract_class_declaration", "interface_declaration", "enum_declaration", "record_declaration",
 		"namespace_definition", "class_specifier", "struct_specifier", "enum_specifier", "union_specifier", "type_spec":
 		return true
 	}

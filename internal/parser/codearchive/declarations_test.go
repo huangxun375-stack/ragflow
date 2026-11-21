@@ -281,6 +281,39 @@ func TestNestedNamesAndSkeletonExcludeBodies(t *testing.T) {
 	}
 }
 
+func TestChunkSymbolsPreserveDeclarationScope(t *testing.T) {
+	for _, tc := range []struct {
+		path, source string
+		want         []string
+	}{
+		{"pages.js", "export function* pages() {\n  const cursor = 1;\n  yield cursor;\n}\n", []string{"pages"}},
+		{"reader.ts", "export abstract class Reader {\n  abstract read(): string;\n  close(): void {}\n}\n", []string{"Reader", "Reader.read", "Reader.close"}},
+		{"worker.hpp", "typedef struct { void run() {} } Worker;\n", []string{"Worker", "Worker.run"}},
+		{"tagged.hpp", "typedef struct WorkerTag { void run() {} } Worker;\n", []string{"Worker", "Worker.run"}},
+		{"pointer.hpp", "typedef struct Widget { void run() {} } *WidgetHandle;\n", []string{"WidgetHandle", "Widget.run"}},
+		{"anonymous.hpp", "typedef struct { void run() {} } *Handle;\n", []string{"Handle", "run"}},
+		{"array.hpp", "typedef struct Widget { void run() {} } Widgets[2];\n", []string{"Widgets", "Widget.run"}},
+		{"parenthesized.hpp", "typedef struct Widget { void run() {} } (Worker);\n", []string{"Worker", "Worker.run"}},
+		{"nested.hpp", "struct Outer { typedef struct Widget { void run() {} } *Handle; };\n", []string{"Outer", "Outer.Handle", "Outer.Widget.run"}},
+		{"status.hpp", "typedef int Status;\n", []string{"Status"}},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			opts := options()
+			result, err := Process(t.Context(), archive(t, member{tc.path, tc.source, 0}), opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertLosslessNonblankChunks(t, result, tc.source, opts)
+			if result.Stats.SyntaxFallbacks != 0 || len(result.Chunks) != 1 {
+				t.Fatalf("expected one structural chunk: %+v", result)
+			}
+			if got := result.Chunks[0].Symbols; !slices.Equal(got, tc.want) {
+				t.Fatalf("published symbols = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestGroupedGoTypesRemainSeparateWithoutMerging(t *testing.T) {
 	source := "package p\ntype (\n // First has a documented field and must remain a unit.\n First struct { Value string }\n // Second has a documented field and must remain a unit.\n Second struct { Value int }\n)\n"
 	opts := options()

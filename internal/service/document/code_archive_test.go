@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"maps"
 	"mime/multipart"
 	"strings"
 	"testing"
@@ -249,11 +250,27 @@ func TestArchiveDocumentAvailabilityTargetsPublishedAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The caller can have an older snapshot than the document row locked by the PATCH.
+	doc.Status = new("0")
+	if err := svc.updateDocumentStatusOnly(t.Context(), doc, kb, 1); err != nil {
+		t.Fatal(err)
+	}
+	if len(eng.updateConditions) != 0 || doc.Status == nil || *doc.Status != "1" {
+		t.Fatalf("redundant enable touched chunk availability or retained stale status: conditions=%v status=%v", eng.updateConditions, doc.Status)
+	}
 	if err := svc.updateDocumentStatusOnly(t.Context(), doc, kb, 0); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.updateConditions) != 1 || eng.updateConditions[0]["archive_run_kwd"] != "run" || eng.updateConditions[0]["archive_attempt_kwd"] != "attempt" {
 		t.Fatalf("condition=%v", eng.updateConditions)
+	}
+	// SQL still reads disabled if ES applied an enable but lost the reply.
+	// An explicit disable must reach the same generation again.
+	if err := svc.updateDocumentStatusOnly(t.Context(), doc, kb, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(eng.updateConditions) != 2 || !maps.Equal(eng.updateConditions[0], eng.updateConditions[1]) || eng.updateValues[1]["available_int"] != 0 {
+		t.Fatalf("disable was not reasserted: conditions=%v values=%v", eng.updateConditions, eng.updateValues)
 	}
 	if err := db.Model(&entity.DocumentCodeArchive{}).Where("doc_id = ?", "doc-1").Update("status", "pending").Error; err != nil {
 		t.Fatal(err)
@@ -261,7 +278,7 @@ func TestArchiveDocumentAvailabilityTargetsPublishedAttempt(t *testing.T) {
 	if err := svc.updateDocumentStatusOnly(t.Context(), doc, kb, 1); err != nil {
 		t.Fatal(err)
 	}
-	if len(eng.updateConditions) != 1 {
+	if len(eng.updateConditions) != 2 {
 		t.Fatal("pending generation must be synchronized at publication")
 	}
 	if doc.Status == nil || *doc.Status != "1" {

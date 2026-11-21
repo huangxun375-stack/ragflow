@@ -219,6 +219,12 @@ func analyzeLanguage(ctx context.Context, language, text string, errorRatio floa
 			if s, ok := declarationSymbol(n, source, scope); ok {
 				parsed.spans = append(parsed.spans, byteSpan{s.start, s.end})
 				parsed.symbols = append(parsed.symbols, s)
+				if kind == "type_definition" {
+					if body := declarationBody(n); body != nil {
+						owner := typedefMemberName(n)
+						return walk(body, qualifiedSymbolName(owner, source, scope))
+					}
+				}
 				if !containerDeclaration(kind) {
 					// Local declarations belong to their enclosing callable, not
 					// to the file's retrieval vocabulary.
@@ -286,8 +292,8 @@ func (s *syntax) applyErrorRatio(text string, errorRatio float64) {
 
 func declarationKind(kind string) bool {
 	switch kind {
-	case "function_definition", "function_declaration", "method_declaration", "class_definition",
-		"class_declaration", "method_definition", "interface_declaration", "enum_declaration",
+	case "function_definition", "function_declaration", "generator_function_declaration", "method_declaration", "class_definition",
+		"class_declaration", "abstract_class_declaration", "method_definition", "interface_declaration", "enum_declaration",
 		"type_alias_declaration", "record_declaration", "constructor_declaration", "namespace_definition",
 		"class_specifier", "struct_specifier", "enum_specifier", "union_specifier", "type_spec", "type_alias",
 		"variable_declarator", "function_declaration_statement", "function_declarator", "type_definition",
@@ -306,6 +312,7 @@ func declarationName(n *ts.Node) *ts.Node {
 	}
 	declarator := n.ChildByFieldName("declarator")
 	for declarator != nil {
+		declarator = unwrapDeclarator(declarator)
 		switch declarator.Kind() {
 		case "identifier", "field_identifier", "type_identifier", "qualified_identifier", "operator_name", "destructor_name":
 			return declarator

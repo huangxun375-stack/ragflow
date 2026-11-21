@@ -201,7 +201,7 @@ func normalizeAgentReferenceChunks(chunks []interface{}) []map[string]interface{
 		if !ok {
 			continue
 		}
-		result = append(result, map[string]interface{}{
+		normalized := map[string]interface{}{
 			"id":            firstNonNil(chunk["chunk_id"], chunk["id"]),
 			"content":       firstNonNil(chunk["content_with_weight"], chunk["content"]),
 			"document_id":   firstNonNil(chunk["doc_id"], chunk["document_id"]),
@@ -209,7 +209,9 @@ func normalizeAgentReferenceChunks(chunks []interface{}) []map[string]interface{
 			"dataset_id":    firstNonNil(chunk["kb_id"], chunk["dataset_id"]),
 			"image_id":      firstNonNil(chunk["image_id"], chunk["img_id"]),
 			"positions":     firstNonNil(chunk["positions"], chunk["position_int"]),
-		})
+		}
+		copyArchiveCitationFields(normalized, chunk)
+		result = append(result, normalized)
 	}
 	return result
 }

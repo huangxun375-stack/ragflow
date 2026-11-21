@@ -639,6 +639,11 @@ func TestRetrieval_RecordsFrontendReferencePayload(t *testing.T) {
 			TermSimilarity:   0.7,
 			VectorSimilarity: 0.8,
 		},
+		translateChunk(map[string]any{
+			"chunk_id": "ck-2", "doc_id": "doc-2", "docnm_kwd": "repo.zip", "kb_id": "kb-1",
+			"source_path": "src/reader.go", "start_line": 5, "end_line": 7,
+			"code_lang": "go", "archive_run_id": "archive-run", "archive_attempt_kwd": "attempt",
+		}),
 	}})
 	t.Cleanup(func() { SetRetrievalService(prev) })
 
@@ -653,16 +658,33 @@ func TestRetrieval_RecordsFrontendReferencePayload(t *testing.T) {
 
 	reference := state.GetRetrievalReference()
 	chunks, _ := reference["chunks"].([]any)
-	if len(chunks) != 1 {
-		t.Fatalf("reference chunks length = %d, want 1", len(chunks))
+	if len(chunks) != 2 {
+		t.Fatalf("reference chunks length = %d, want 2", len(chunks))
 	}
 	chunk, _ := chunks[0].(map[string]any)
 	if chunk["document_name"] != "paper.pdf" || chunk["image_id"] != "img-1" {
 		t.Fatalf("reference chunk = %#v, want document_name/image_id", chunk)
 	}
+	code, _ := chunks[1].(map[string]any)
+	for key, want := range map[string]any{
+		"source_path": "src/reader.go", "start_line": 5, "end_line": 7,
+		"code_lang": "go", "archive_run_id": "archive-run",
+	} {
+		if got := code[key]; got != want {
+			t.Errorf("ZIP reference %s = %v, want %v", key, got, want)
+		}
+		if _, exists := chunk[key]; exists {
+			t.Errorf("ordinary reference unexpectedly contains %s", key)
+		}
+	}
+	for _, key := range []string{"archive_attempt_kwd", "archive_attempt_id"} {
+		if _, exists := code[key]; exists {
+			t.Errorf("ZIP reference exposes internal %s", key)
+		}
+	}
 	docAggs, _ := reference["doc_aggs"].([]any)
-	if len(docAggs) != 1 {
-		t.Fatalf("reference doc_aggs length = %d, want 1", len(docAggs))
+	if len(docAggs) != 2 {
+		t.Fatalf("reference doc_aggs length = %d, want 2", len(docAggs))
 	}
 	docAgg, _ := docAggs[0].(map[string]any)
 	if docAgg["doc_id"] != "doc-1" || docAgg["doc_name"] != "paper.pdf" || docAgg["count"] != 1 {
